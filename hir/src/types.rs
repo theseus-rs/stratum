@@ -6,6 +6,10 @@ use stratum_arena::Symbol;
 
 /// C-style type qualifiers (`const`, `volatile`, `restrict`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "C type qualifiers are independent flags"
+)]
 pub struct Qualifiers {
     /// The `const` qualifier.
     pub is_const: bool,
@@ -13,13 +17,15 @@ pub struct Qualifiers {
     pub is_volatile: bool,
     /// The C99 `restrict` qualifier.
     pub is_restrict: bool,
+    /// The C11 `_Atomic` qualifier.
+    pub is_atomic: bool,
 }
 
 impl Qualifiers {
     /// Returns `true` if no qualifier is set.
     #[must_use]
     pub const fn is_empty(self) -> bool {
-        !self.is_const && !self.is_volatile && !self.is_restrict
+        !self.is_const && !self.is_volatile && !self.is_restrict && !self.is_atomic
     }
 }
 
@@ -146,6 +152,7 @@ mod tests {
                 is_const: true,
                 is_volatile: false,
                 is_restrict: false,
+                is_atomic: false,
             }
             .is_empty()
         );

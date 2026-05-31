@@ -3,7 +3,7 @@
 use crate::alloc_prelude::*;
 use crate::parser::{PResult, Parser};
 use stratum_c_ast::{CNode, CNodeId};
-use stratum_c_lexer::{Keyword, Punctuator, TokenKind};
+use stratum_c_lexer::{Dialect, Keyword, Punctuator, TokenKind};
 
 impl Parser<'_> {
     /// Parses a `{ ... }` compound statement, introducing a new scope.
@@ -11,10 +11,20 @@ impl Parser<'_> {
         let start = self.expect_punct(Punctuator::LBrace)?;
         self.enter_scope();
         let mut items = Vec::new();
+        let mut seen_statement = false;
         while !self.is_punct(Punctuator::RBrace) && !self.at_eof() {
+            let is_decl = self.at_declaration_start();
+            if is_decl && seen_statement && !self.supports(Dialect::C99) {
+                self.error("declarations after statements require c99 or later");
+                self.synchronize();
+                continue;
+            }
             match self.parse_block_item() {
                 Ok(id) => items.push(id),
                 Err(_) => self.synchronize(),
+            }
+            if !is_decl {
+                seen_statement = true;
             }
         }
         self.exit_scope();
@@ -23,6 +33,12 @@ impl Parser<'_> {
     }
 
     fn parse_block_item(&mut self) -> PResult<CNodeId> {
+        self.skip_attribute_specifiers()?;
+        if let TokenKind::Keyword(kw) = self.peek_kind()
+            && crate::decl::is_static_assert_keyword(kw)
+        {
+            return self.parse_static_assert();
+        }
         if self.at_declaration_start() {
             self.parse_declaration()
         } else {
@@ -32,6 +48,12 @@ impl Parser<'_> {
 
     /// Parses a local declaration (reusing the external-declaration declarator machinery).
     fn parse_declaration(&mut self) -> PResult<CNodeId> {
+        self.skip_attribute_specifiers()?;
+        if let TokenKind::Keyword(kw) = self.peek_kind()
+            && crate::decl::is_static_assert_keyword(kw)
+        {
+            return self.parse_static_assert();
+        }
         let start = self.peek().span;
         let specifiers = self.parse_decl_specifiers()?;
         if self.eat_punct(Punctuator::Semicolon) {
@@ -52,6 +74,7 @@ impl Parser<'_> {
 
     /// Parses a statement.
     pub(crate) fn parse_statement(&mut self) -> PResult<CNodeId> {
+        self.skip_attribute_specifiers()?;
         match self.peek_kind() {
             TokenKind::Punct(Punctuator::LBrace) => self.parse_compound_statement(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
@@ -145,6 +168,7 @@ impl Parser<'_> {
             return Ok(None);
         }
         if self.at_declaration_start() {
+            self.require(Dialect::C99, "declaration in `for` initializer")?;
             let start = self.peek().span;
             let specifiers = self.parse_decl_specifiers()?;
             let first = self.parse_declarator(false)?;
@@ -195,7 +219,13 @@ impl Parser<'_> {
             return Err(self.error("expected a label name"));
         };
         self.expect_punct(Punctuator::Colon)?;
-        let body = self.parse_statement()?;
+        let body = if self.supports(Dialect::C23) && self.at_declaration_start() {
+            self.parse_declaration()?
+        } else if self.supports(Dialect::C23) && self.is_punct(Punctuator::RBrace) {
+            self.ast.alloc(CNode::ExprStmt(None), start)?
+        } else {
+            self.parse_statement()?
+        };
         let span = start.to(self.ast.span(body));
         Ok(self.ast.alloc(CNode::Label { name, body }, span)?)
     }
@@ -245,7 +275,7 @@ mod tests {
     use crate::parser::Parser;
     use stratum_arena::Interner;
     use stratum_c_ast::{CAst, CNode};
-    use stratum_c_lexer::{Keyword, Punctuator, Token, TokenKind};
+    use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
     use stratum_diagnostics::{FileId, Span};
     use stratum_utils::HashSet;
 
@@ -260,6 +290,7 @@ mod tests {
             ast: CAst::with_interner(Interner::new()),
             diagnostics: Vec::new(),
             typedefs: vec![HashSet::default()],
+            dialect: Dialect::DEFAULT,
         }
     }
 
@@ -320,5 +351,46 @@ mod tests {
         }];
         let mut parser = parser_with(&tokens);
         assert!(parser.parse_label().is_err());
+    }
+
+    #[test]
+    fn declaration_entry_handles_static_assert_directly() {
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::StaticAssert),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 1,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Comma),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::String(stratum_arena::Symbol::default()),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.dialect = Dialect::C11;
+        let id = parser.parse_declaration().ok().unwrap();
+        assert!(matches!(parser.ast.node(id), CNode::StaticAssert { .. }));
     }
 }

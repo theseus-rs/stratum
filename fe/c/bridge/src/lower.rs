@@ -425,11 +425,14 @@ impl<'a> CLowering<'a> {
             StorageClass::Static => Some(HirStorage::Static),
             StorageClass::Auto => Some(HirStorage::Auto),
             StorageClass::Register => Some(HirStorage::Register),
+            StorageClass::ThreadLocal => Some(HirStorage::ThreadLocal),
+            StorageClass::Constexpr => Some(HirStorage::Constexpr),
             StorageClass::Typedef => None,
         });
         DeclFlags {
             storage,
             inline: specifiers.inline,
+            noreturn: specifiers.noreturn,
         }
     }
 
@@ -466,7 +469,7 @@ mod tests {
     use super::{CLowering, lower};
     use crate::alloc_prelude::*;
     use crate::bridge::CBridge;
-    use crate::test_utils::{TestResult, build, dump};
+    use crate::test_utils::{build, dump};
     use stratum_c_ast::{
         CAst, CNode, DeclSpecifiers, Declarator, InitDeclarator, StorageClass, TypeSpecifier,
     };
@@ -485,130 +488,123 @@ mod tests {
     }
 
     #[test]
-    fn empty_unit_lowers_to_empty_module() -> TestResult {
-        assert_eq!(dump("")?, "module\n");
-        Ok(())
+    fn empty_unit_lowers_to_empty_module() {
+        assert_eq!(dump(""), "module\n");
     }
 
     #[test]
-    fn function_with_return() -> TestResult {
-        let out = dump("int main(void) { return 0; }")?;
+    fn function_with_return() {
+        let out = dump("int main(void) { return 0; }");
         assert!(out.contains("function main"));
         assert!(out.contains("return"));
         assert!(out.contains("int 0"));
-        Ok(())
     }
 
     #[test]
-    fn function_prototype_has_no_body() -> TestResult {
-        let out = dump("int f(int a);")?;
+    fn function_prototype_has_no_body() {
+        let out = dump("int f(int a);");
         assert!(out.contains("function f(a: i32) -> i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn variadic_prototype_is_preserved() -> TestResult {
-        let out = dump("int printf(char *fmt, ...);")?;
+    fn variadic_prototype_is_preserved() {
+        let out = dump("int printf(char *fmt, ...);");
         assert!(out.contains("function printf("), "got: {out}");
         assert!(out.contains(", ...) -> i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn storage_class_and_inline_flags_are_preserved() -> TestResult {
-        let out = dump("static inline int f(void) { return 0; }")?;
-        assert!(out.contains("static inline function f"), "got: {out}");
-        Ok(())
+    fn storage_class_and_inline_flags_are_preserved() {
+        let out = dump(
+            "static inline _Noreturn int f(void) { return 0; } \
+             thread_local int tls; constexpr int c = 1;",
+        );
+        assert!(
+            out.contains("static inline _Noreturn function f"),
+            "got: {out}"
+        );
+        assert!(out.contains("_Thread_local var tls"), "got: {out}");
+        assert!(out.contains("constexpr var c"), "got: {out}");
     }
 
     #[test]
-    fn auto_and_register_storage_flags_are_preserved() -> TestResult {
-        let out = dump("void f(void) { auto int a; register int r; }")?;
+    fn auto_and_register_storage_flags_are_preserved() {
+        let out = dump("void f(void) { auto int a; register int r; }");
         assert!(out.contains("auto var a"), "got: {out}");
         assert!(out.contains("register var r"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn typedef_lowers_to_type_alias() -> TestResult {
-        let out = dump("typedef int myint; myint x;")?;
+    fn typedef_lowers_to_type_alias() {
+        let out = dump("typedef int myint; myint x;");
         assert!(out.contains("typedef myint = i32"), "got: {out}");
         assert!(out.contains("var x: myint"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn struct_definition_lowers_to_record() -> TestResult {
-        let out = dump("struct Point { int x; int y; };")?;
+    fn struct_definition_lowers_to_record() {
+        let out = dump("struct Point { int x; int y; };");
         assert!(out.contains("struct Point"), "got: {out}");
         assert!(out.contains("field x: i32"), "got: {out}");
         assert!(out.contains("field y: i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn union_definition_lowers_to_record() -> TestResult {
-        let out = dump("union U { int i; float f; };")?;
+    fn union_definition_lowers_to_record() {
+        let out = dump("union U { int i; float f; };");
         assert!(out.contains("union U"), "got: {out}");
         assert!(out.contains("field i: i32"), "got: {out}");
         assert!(out.contains("field f: f32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn anonymous_aggregates_and_abstract_fields_lower() -> TestResult {
-        let out = dump("union { int; } u; enum { A };")?;
+    fn anonymous_aggregates_and_abstract_fields_lower() {
+        let out = dump("union { int; } u; enum { A };");
         assert!(out.contains("union <anonymous>"), "got: {out}");
         assert!(out.contains("field <unnamed>: i32"), "got: {out}");
         assert!(out.contains("enum <anonymous>"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn bitfields_are_preserved() -> TestResult {
-        let out = dump("struct Flags { unsigned a : 1; unsigned b : 3; };")?;
+    fn bitfields_are_preserved() {
+        let out = dump("struct Flags { unsigned a : 1; unsigned b : 3; };");
         assert!(out.contains("field a: u32 : "), "got: {out}");
         assert!(out.contains("int 1"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn enum_definition_lowers_to_enumeration() -> TestResult {
-        let out = dump("enum Color { Red, Green = 5, Blue };")?;
+    fn enum_definition_lowers_to_enumeration() {
+        let out = dump("enum Color { Red, Green = 5, Blue };");
         assert!(out.contains("enum Color"), "got: {out}");
         assert!(out.contains("variant Red"), "got: {out}");
         assert!(out.contains("variant Green"), "got: {out}");
         assert!(out.contains("int 5"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn struct_with_variable_emits_record_and_var() -> TestResult {
-        let out = dump("struct P { int x; } p;")?;
+    fn struct_with_variable_emits_record_and_var() {
+        let out = dump("struct P { int x; } p;");
         assert!(out.contains("struct P"), "got: {out}");
         assert!(out.contains("var p: struct P"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn aggregate_initializer_lowers_to_init_list() -> TestResult {
-        let out = dump("int a[3] = { 1, 2, 3 };")?;
+    fn aggregate_initializer_lowers_to_init_list() {
+        let out = dump("int a[3] = { 1, 2, 3 };");
         assert!(out.contains("init-list"), "got: {out}");
         assert!(out.contains("int 1"), "got: {out}");
         assert!(out.contains("int 3"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn nested_aggregate_initializer() -> TestResult {
-        let out = dump("int m[2][2] = { { 1, 2 }, { 3, 4 } };")?;
+    fn nested_aggregate_initializer() {
+        let out = dump("int m[2][2] = { { 1, 2 }, { 3, 4 } };");
         let lists = out.matches("init-list").count();
         assert!(lists >= 3, "expected nested init lists, got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn lowering_is_total_no_errors_on_rich_input() -> TestResult {
+    fn lowering_is_total_no_errors_on_rich_input() {
         let src = "
             typedef unsigned long size_t;
             struct Node { int value; struct Node *next; };
@@ -625,34 +621,30 @@ mod tests {
                 return total;
             }
         ";
-        let ast = build(src)?;
-        let result = lower(&ast)?;
+        let ast = build(src);
+        let result = lower(&ast).unwrap();
         assert!(!result.has_errors(), "got: {:?}", result.diagnostics);
-        Ok(())
     }
 
     #[test]
-    fn designated_initializers_lower_with_designators() -> TestResult {
-        let out = dump("struct P { int x; int y; }; struct P p = { .y = 2, .x = 1 };")?;
+    fn designated_initializers_lower_with_designators() {
+        let out = dump("struct P { int x; int y; }; struct P p = { .y = 2, .x = 1 };");
         assert!(out.contains("init-list"), "got: {out}");
         assert!(out.contains("designator .y"), "got: {out}");
         assert!(out.contains("designator .x"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn array_index_designators_lower() -> TestResult {
-        let out = dump("int a[4] = { [2] = 9, [0] = 1 };")?;
+    fn array_index_designators_lower() {
+        let out = dump("int a[4] = { [2] = 9, [0] = 1 };");
         assert!(out.contains("init-list"), "got: {out}");
         assert!(out.contains("designator []"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn separate_interners_resolve_names() -> TestResult {
-        let out = dump("int g; void f(void) { g = 1; }")?;
+    fn separate_interners_resolve_names() {
+        let out = dump("int g; void f(void) { g = 1; }");
         assert!(out.contains("name `g`"), "got: {out}");
-        Ok(())
     }
 
     #[test]

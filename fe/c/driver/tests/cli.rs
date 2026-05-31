@@ -26,6 +26,28 @@ fn binary_compiles_input_file() {
 }
 
 #[test]
+fn binary_enforces_requested_std() {
+    let input = fixture_path("std.c");
+    fs::write(
+        &input,
+        "int f(void) { int x = 0; x = 1; int y = x; return y; }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_stratum-c"))
+        .arg("--std=c89")
+        .arg("--emit=ast")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("(tu"));
+
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
 fn binary_reports_help_as_usage_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_stratum-c"))
         .arg("--help")

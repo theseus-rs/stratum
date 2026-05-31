@@ -38,6 +38,12 @@ impl CLowering<'_> {
                 cx.alloc(HirNode::CharLiteral(value), span)
                     .map_err(crate::error::Error::from)
             }
+            CNode::BoolLiteral(value) => cx
+                .alloc(HirNode::IntLiteral(i128::from(*value)), span)
+                .map_err(crate::error::Error::from),
+            CNode::Nullptr => cx
+                .alloc(HirNode::IntLiteral(0), span)
+                .map_err(crate::error::Error::from),
             CNode::FloatLiteral(sym) => {
                 let sym = *sym;
                 let interned = self.lower_symbol(cx, sym)?;
@@ -197,18 +203,27 @@ impl CLowering<'_> {
                 cx.alloc(HirNode::Cast { ty, operand }, span)
                     .map_err(crate::error::Error::from)
             }
-            CNode::SizeofExpr(operand) => {
+            CNode::SizeofExpr(operand) | CNode::AlignofExpr(operand) => {
                 let operand = *operand;
                 let operand = self.lower_expr(cx, operand)?;
                 cx.alloc(HirNode::SizeofExpr(operand), span)
                     .map_err(crate::error::Error::from)
             }
-            CNode::SizeofType(type_name) => {
+            CNode::SizeofType(type_name) | CNode::AlignofType(type_name) => {
                 let type_name = type_name.clone();
                 let ty =
                     self.lower_type(cx, &type_name.specifiers, &type_name.declarator.derivations)?;
                 cx.alloc(HirNode::SizeofType(ty), span)
                     .map_err(crate::error::Error::from)
+            }
+            CNode::GenericSelection {
+                controlling,
+                associations,
+            } => {
+                let selected = associations
+                    .first()
+                    .map_or(*controlling, |association| association.expr);
+                self.lower_expr(cx, selected)
             }
             CNode::CompoundLiteral { type_name, init } => {
                 let type_name = type_name.clone();
@@ -310,7 +325,7 @@ fn compound_op(op: AssignOp) -> Option<BinaryOp> {
 mod tests {
     use super::CLowering;
     use crate::alloc_prelude::*;
-    use crate::test_utils::{TestResult, dump};
+    use crate::test_utils::dump;
     use stratum_c_ast::{CAst, CNode, InitItem};
     use stratum_diagnostics::{FileId, Span};
     use stratum_hir::{HirContext, HirNode};
@@ -320,83 +335,86 @@ mod tests {
     }
 
     #[test]
-    fn index_is_first_class() -> TestResult {
-        let out = dump("void f(int *p) { p[2]; }")?;
+    fn index_is_first_class() {
+        let out = dump("void f(int *p) { p[2]; }");
         assert!(out.contains("index"), "got: {out}");
         assert!(!out.contains("binary `+`"), "index must not desugar: {out}");
-        Ok(())
     }
 
     #[test]
-    fn compound_assignment_is_first_class() -> TestResult {
-        let out = dump("void f(int x) { x += 5; }")?;
+    fn compound_assignment_is_first_class() {
+        let out = dump("void f(int x) { x += 5; }");
         assert!(out.contains("assign `+=`"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn post_increment_is_first_class() -> TestResult {
-        let out = dump("void f(int x) { x++; }")?;
+    fn post_increment_is_first_class() {
+        let out = dump("void f(int x) { x++; }");
         assert!(out.contains("postfix `++`"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn pre_increment_is_first_class() -> TestResult {
-        let out = dump("void f(int x) { ++x; }")?;
+    fn pre_increment_is_first_class() {
+        let out = dump("void f(int x) { ++x; }");
         assert!(out.contains("unary `++`"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn sizeof_type_lowers_without_error() -> TestResult {
-        let out = dump("void f(void) { int x; x = sizeof(int); }")?;
+    fn sizeof_type_lowers_without_error() {
+        let out = dump("void f(void) { int x; x = sizeof(int); }");
         assert!(out.contains("sizeof-type i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn sizeof_expr_lowers_without_error() -> TestResult {
-        let out = dump("void f(int x) { x = sizeof x; }")?;
+    fn sizeof_expr_lowers_without_error() {
+        let out = dump("void f(int x) { x = sizeof x; }");
         assert!(out.contains("sizeof-expr"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn ternary_lowers_faithfully() -> TestResult {
-        let out = dump("void f(int x) { x = x ? 1 : 2; }")?;
+    fn c23_constants_alignof_and_generic_lower() {
+        let out = dump(
+            "int f(int c) { int a = true; int b = false; void *p = nullptr; \
+             return alignof c + _Alignof(int) + _Generic(c, int: a, default: b); }",
+        );
+        assert!(out.contains("var a: i32"), "got: {out}");
+        assert!(out.contains("int 1"), "got: {out}");
+        assert!(out.contains("var b: i32"), "got: {out}");
+        assert!(out.contains("var p: *void"), "got: {out}");
+        assert!(out.contains("sizeof-expr"), "got: {out}");
+        assert!(out.contains("sizeof-type i32"), "got: {out}");
+    }
+
+    #[test]
+    fn ternary_lowers_faithfully() {
+        let out = dump("void f(int x) { x = x ? 1 : 2; }");
         assert!(out.contains("ternary"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn comma_lowers_faithfully() -> TestResult {
-        let out = dump("void f(int x) { x = (1, 2); }")?;
+    fn comma_lowers_faithfully() {
+        let out = dump("void f(int x) { x = (1, 2); }");
         assert!(out.contains("comma"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn member_access_lowers_faithfully() -> TestResult {
-        let out = dump("struct S { int a; }; void f(struct S *s) { s->a; (*s).a; }")?;
+    fn member_access_lowers_faithfully() {
+        let out = dump("struct S { int a; }; void f(struct S *s) { s->a; (*s).a; }");
         assert!(out.contains("member ->a"), "got: {out}");
         assert!(out.contains("member .a"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn cast_lowers_faithfully() -> TestResult {
-        let out = dump("void f(int x) { x = (int)3; }")?;
+    fn cast_lowers_faithfully() {
+        let out = dump("void f(int x) { x = (int)3; }");
         assert!(out.contains("cast i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn compound_literal_lowers() -> TestResult {
-        let out = dump("struct P { int x; }; void f(void) { struct P q; q = (struct P){ 7 }; }")?;
+    fn compound_literal_lowers() {
+        let out = dump("struct P { int x; }; void f(void) { struct P q; q = (struct P){ 7 }; }");
         assert!(out.contains("compound-literal struct P"), "got: {out}");
         assert!(out.contains("init-list"), "got: {out}");
-        Ok(())
     }
 
     #[test]

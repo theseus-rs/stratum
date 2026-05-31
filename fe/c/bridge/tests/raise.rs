@@ -73,7 +73,8 @@ fn raises_variadic_prototype() -> TestResult {
 
 #[test]
 fn raises_storage_and_inline_prefix() -> TestResult {
-    assert_raises_unchanged("static inline int f(void) { return 0; }")
+    assert_raises_unchanged("static inline int f(void) { return 0; }")?;
+    assert_raises_unchanged("_Noreturn int f(void);")
 }
 
 #[test]
@@ -100,6 +101,7 @@ fn raises_pointer_and_array_declarators() -> TestResult {
 fn raises_qualifiers_including_restrict() -> TestResult {
     assert_raises_unchanged("const int a = 0;")?;
     assert_raises_unchanged("int *restrict p;")?;
+    assert_raises_unchanged("_Atomic int a;")?;
     Ok(())
 }
 

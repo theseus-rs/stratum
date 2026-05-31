@@ -470,6 +470,9 @@ fn flag_prefix(flags: DeclFlags) -> String {
     if flags.inline {
         out.push_str("inline ");
     }
+    if flags.noreturn {
+        out.push_str("_Noreturn ");
+    }
     out
 }
 
@@ -484,6 +487,9 @@ fn quals_str(quals: Qualifiers) -> String {
     }
     if quals.is_restrict {
         parts.push("restrict");
+    }
+    if quals.is_atomic {
+        parts.push("_Atomic");
     }
     parts.join(" ")
 }
@@ -592,6 +598,7 @@ mod tests {
                     is_const: true,
                     is_volatile: false,
                     is_restrict: false,
+                    is_atomic: false,
                 },
             }),
             Err(Error::UnexpectedHirNode("base type"))

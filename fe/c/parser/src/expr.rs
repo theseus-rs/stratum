@@ -1,9 +1,10 @@
 //! Parsing of expressions, using precedence climbing for binary operators.
 
 use crate::alloc_prelude::*;
+use crate::decl::{is_alignof_keyword, is_type_keyword};
 use crate::parser::{PResult, Parser};
-use stratum_c_ast::{AssignOp, BinaryOp, CNode, CNodeId, PostfixOp, UnaryOp};
-use stratum_c_lexer::{Keyword, Punctuator, TokenKind};
+use stratum_c_ast::{AssignOp, BinaryOp, CNode, CNodeId, GenericAssociation, PostfixOp, UnaryOp};
+use stratum_c_lexer::{Dialect, Keyword, Punctuator, TokenKind};
 
 impl Parser<'_> {
     /// Parses a full expression, including the comma operator.
@@ -84,6 +85,7 @@ impl Parser<'_> {
             self.expect_punct(Punctuator::RParen)?;
             // `(T){ ... }` is a C99 compound literal, not a cast.
             if self.is_punct(Punctuator::LBrace) {
+                self.require(Dialect::C99, "compound literal")?;
                 let init = self.parse_brace_initializer()?;
                 let span = start.to(self.ast.span(init));
                 let literal = self
@@ -118,6 +120,7 @@ impl Parser<'_> {
             TokenKind::Punct(Punctuator::PlusPlus) => self.parse_prefix_incr(UnaryOp::PreInc),
             TokenKind::Punct(Punctuator::MinusMinus) => self.parse_prefix_incr(UnaryOp::PreDec),
             TokenKind::Keyword(Keyword::Sizeof) => self.parse_sizeof(),
+            TokenKind::Keyword(kw) if is_alignof_keyword(kw) => self.parse_alignof(),
             _ => self.parse_postfix(),
         }
     }
@@ -142,6 +145,31 @@ impl Parser<'_> {
         let operand = self.parse_unary()?;
         let span = start.to(self.ast.span(operand));
         Ok(self.ast.alloc(CNode::SizeofExpr(operand), span)?)
+    }
+
+    fn parse_alignof(&mut self) -> PResult<CNodeId> {
+        let kw = match self.peek_kind() {
+            TokenKind::Keyword(kw) if is_alignof_keyword(kw) => kw,
+            _ => return Err(self.error("expected `alignof`")),
+        };
+        if kw == Keyword::C23Alignof {
+            self.require(Dialect::C23, "`alignof`")?;
+        } else {
+            self.require(Dialect::C11, "`_Alignof`")?;
+        }
+        let start = self.bump().span;
+        if self.is_punct(Punctuator::LParen) && self.lparen_starts_type() {
+            self.bump();
+            let type_name = self.parse_type_name()?;
+            let end = self.expect_punct(Punctuator::RParen)?;
+            return Ok(self
+                .ast
+                .alloc(CNode::AlignofType(type_name), start.to(end))?);
+        }
+        self.require(Dialect::C23, "`alignof` expression operand")?;
+        let operand = self.parse_unary()?;
+        let span = start.to(self.ast.span(operand));
+        Ok(self.ast.alloc(CNode::AlignofExpr(operand), span)?)
     }
 
     fn parse_postfix(&mut self) -> PResult<CNodeId> {
@@ -227,6 +255,19 @@ impl Parser<'_> {
                 self.bump();
                 Ok(self.ast.alloc(CNode::StringLiteral(sym), token.span)?)
             }
+            TokenKind::Keyword(Keyword::True) => {
+                self.bump();
+                Ok(self.ast.alloc(CNode::BoolLiteral(true), token.span)?)
+            }
+            TokenKind::Keyword(Keyword::False) => {
+                self.bump();
+                Ok(self.ast.alloc(CNode::BoolLiteral(false), token.span)?)
+            }
+            TokenKind::Keyword(Keyword::Nullptr) => {
+                self.bump();
+                Ok(self.ast.alloc(CNode::Nullptr, token.span)?)
+            }
+            TokenKind::Keyword(Keyword::Generic) => self.parse_generic_selection(),
             TokenKind::Punct(Punctuator::LParen) => {
                 self.bump();
                 let expr = self.parse_expr()?;
@@ -251,6 +292,38 @@ impl Parser<'_> {
             _ => CNode::IntLiteral(sym),
         };
         Ok(self.ast.alloc(node, token.span)?)
+    }
+
+    fn parse_generic_selection(&mut self) -> PResult<CNodeId> {
+        self.require(Dialect::C11, "`_Generic`")?;
+        let start = self.bump().span;
+        self.expect_punct(Punctuator::LParen)?;
+        let controlling = self.parse_assignment()?;
+        self.expect_punct(Punctuator::Comma)?;
+        let mut associations = Vec::new();
+        loop {
+            associations.push(self.parse_generic_association()?);
+            if !self.eat_punct(Punctuator::Comma) {
+                break;
+            }
+        }
+        let end = self.expect_punct(Punctuator::RParen)?;
+        let node = CNode::GenericSelection {
+            controlling,
+            associations,
+        };
+        Ok(self.ast.alloc(node, start.to(end))?)
+    }
+
+    fn parse_generic_association(&mut self) -> PResult<GenericAssociation> {
+        let type_name = if self.eat_keyword(Keyword::Default) {
+            None
+        } else {
+            Some(self.parse_type_name()?)
+        };
+        self.expect_punct(Punctuator::Colon)?;
+        let expr = self.parse_assignment()?;
+        Ok(GenericAssociation { type_name, expr })
     }
 }
 
@@ -318,38 +391,15 @@ fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
     Some(result)
 }
 
-/// Returns `true` if `kw` can begin a type name (for cast/`sizeof` disambiguation).
-fn is_type_keyword(kw: Keyword) -> bool {
-    matches!(
-        kw,
-        Keyword::Void
-            | Keyword::Char
-            | Keyword::Short
-            | Keyword::Int
-            | Keyword::Long
-            | Keyword::Float
-            | Keyword::Double
-            | Keyword::Signed
-            | Keyword::Unsigned
-            | Keyword::Bool
-            | Keyword::Complex
-            | Keyword::Struct
-            | Keyword::Union
-            | Keyword::Enum
-            | Keyword::Const
-            | Keyword::Volatile
-            | Keyword::Restrict
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{assign_op, binary_op, is_type_keyword, prefix_op};
+    use super::{assign_op, binary_op, prefix_op};
     use crate::alloc_prelude::*;
+    use crate::decl::is_type_keyword;
     use crate::parser::Parser;
     use stratum_arena::{Interner, Symbol};
     use stratum_c_ast::{AssignOp, BinaryOp, CAst, UnaryOp};
-    use stratum_c_lexer::{Keyword, Punctuator, Token, TokenKind};
+    use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
     use stratum_diagnostics::{FileId, Span};
     use stratum_utils::HashSet;
 
@@ -437,7 +487,26 @@ mod tests {
             ast: CAst::with_interner(interner),
             diagnostics: Vec::new(),
             typedefs: vec![HashSet::default()],
+            dialect: Dialect::DEFAULT,
         };
         assert!(parser.parse_int_like().is_err());
+    }
+
+    #[test]
+    fn parse_alignof_rejects_wrong_entry_token_when_called_directly() {
+        let interner = Interner::new();
+        let tokens = [Token {
+            kind: TokenKind::Punct(Punctuator::Semicolon),
+            span: span(),
+        }];
+        let mut parser = Parser {
+            tokens: &tokens,
+            pos: 0,
+            ast: CAst::with_interner(interner),
+            diagnostics: Vec::new(),
+            typedefs: vec![HashSet::default()],
+            dialect: Dialect::DEFAULT,
+        };
+        assert!(parser.parse_alignof().is_err());
     }
 }

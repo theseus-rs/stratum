@@ -21,7 +21,7 @@ mod token;
 
 pub use error::{Error, Result};
 pub use lexer::{LexResult, lex};
-pub use token::{Keyword, PpToken, PpTokenKind, Punctuator, Token, TokenKind};
+pub use token::{Dialect, Keyword, PpToken, PpTokenKind, Punctuator, Token, TokenKind};
 
 #[cfg(test)]
 mod tests;
