@@ -14,7 +14,7 @@ produced an error.
   records `#include` stacks and macro-expansion origins, and resolves byte offsets to
   line/column positions.
 - **`Diagnostic` / `Severity` / `Label`**: structured compiler messages.
-- A plain-text, compiler-style **renderer**.
+- A plain-text **renderer** with source excerpts and caret labels.
 
 The provenance model means the C preprocessor can attribute generated tokens back to both
 their point of use and their point of definition without a later redesign.
