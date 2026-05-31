@@ -1,19 +1,19 @@
 //! Raising of the shared HIR back into C source text.
 //!
 //! This is the reverse of [`lower`](crate::lower::lower): it walks a
-//! [`HirContext`](stratum_hir::HirContext) and renders equivalent C source. Two design
-//! choices keep it correct without a full pretty-printer:
+//! [`HirContext`] and renders equivalent C source. Two design choices keep it correct
+//! without a full pretty-printer:
 //!
-//! - **Full parenthesisation.** Every compound expression is wrapped in parentheses.
+//! - **Full parenthesization.** Every compound expression is wrapped in parentheses.
 //!   Parentheses carry no HIR identity, so re-parsing the emitted text yields the same tree.
 //! - **Item-by-item emission.** Each HIR item is rendered independently, mirroring how
 //!   lowering produced them (aggregate definitions are their own items, uses reference tags).
 //!
-//! The declarator algorithm in [`Raiser::declare_inner`] handles C's inside-out type syntax,
+//! The declarator algorithm in `Raiser::declare_inner` handles C's inside-out type syntax,
 //! including pointer/array/function precedence and `const`/`volatile`/`restrict` placement.
 //!
 //! Unlike a best-effort pretty-printer, raising is **fallible**: an unresolved symbol or an
-//! HIR node appearing in a position it cannot occupy yields an [`Error`](crate::error::Error)
+//! HIR node appearing in a position it cannot occupy yields an [`Error`]
 //! rather than silently emitting invalid C.
 
 use crate::alloc_prelude::*;

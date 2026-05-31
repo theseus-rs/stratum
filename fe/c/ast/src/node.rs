@@ -1,7 +1,7 @@
 //! C abstract syntax tree node definitions.
 //!
 //! Nodes live in a [`CAst`](crate::CAst) arena and reference one another by
-//! [`CNodeId`](crate::CNodeId). Small, non-shared structures (declaration specifiers,
+//! [`CNodeId`]. Small, non-shared structures (declaration specifiers,
 //! declarators) are stored inline rather than in the arena.
 
 use crate::alloc_prelude::*;
