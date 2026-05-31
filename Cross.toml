@@ -1,0 +1,59 @@
+[target."aarch64-linux-android"]
+image = "ghcr.io/cross-rs/aarch64-linux-android:edge"
+
+[target."aarch64_be-unknown-linux-gnu"]
+image = "ghcr.io/cross-rs/aarch64_be-unknown-linux-gnu:edge"
+
+[target."arm-linux-androideabi"]
+image = "ghcr.io/cross-rs/arm-linux-androideabi:edge"
+
+[target."armv7-linux-androideabi"]
+image = "ghcr.io/cross-rs/armv7-linux-androideabi:edge"
+
+[target."i686-linux-android"]
+image = "ghcr.io/cross-rs/i686-linux-android:edge"
+
+[target."i686-pc-windows-gnu"]
+image = "ghcr.io/cross-rs/i686-pc-windows-gnu:edge"
+
+[target."loongarch64-unknown-linux-gnu"]
+image = "ghcr.io/cross-rs/loongarch64-unknown-linux-gnu:edge"
+
+[target."loongarch64-unknown-linux-musl"]
+image = "ghcr.io/cross-rs/loongarch64-unknown-linux-musl:edge"
+
+[target."riscv64gc-unknown-linux-gnu"]
+image = "ghcr.io/cross-rs/riscv64gc-unknown-linux-gnu:edge"
+
+[target."riscv64gc-unknown-linux-musl"]
+image = "ghcr.io/cross-rs/riscv64gc-unknown-linux-musl:edge"
+
+[target."s390x-unknown-linux-gnu"]
+image = "ghcr.io/cross-rs/s390x-unknown-linux-gnu:edge"
+
+[target."sparcv9-sun-solaris"]
+image = "ghcr.io/cross-rs/sparcv9-sun-solaris:edge"
+
+[target."thumbv7neon-linux-androideabi"]
+image = "ghcr.io/cross-rs/thumbv7neon-linux-androideabi:edge"
+
+[target."thumbv8m.base-none-eabi"]
+image = "ghcr.io/cross-rs/thumbv8m.base-none-eabi:edge"
+
+[target."thumbv8m.main-none-eabi"]
+image = "ghcr.io/cross-rs/thumbv8m.main-none-eabi:edge"
+
+[target."thumbv8m.main-none-eabihf"]
+image = "ghcr.io/cross-rs/thumbv8m.main-none-eabihf:edge"
+
+[target."x86_64-linux-android"]
+image = "ghcr.io/cross-rs/x86_64-linux-android:edge"
+
+[target."x86_64-pc-solaris"]
+image = "ghcr.io/cross-rs/x86_64-pc-solaris:edge"
+
+[target."x86_64-pc-windows-gnu"]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge"
+
+[target."x86_64-unknown-netbsd"]
+image = "ghcr.io/cross-rs/x86_64-unknown-netbsd:edge"

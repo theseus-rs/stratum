@@ -52,68 +52,68 @@ jobs:
           # Cross builds
           - platform: aarch64-android
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: aarch64-linux-android
           - platform: aarch64-linux-musl
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: aarch64-unknown-linux-musl
           - platform: aarch64be-linux-gnu
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: aarch64_be-unknown-linux-gnu
             build_std: true
           - platform: arm-android
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: arm-linux-androideabi
           - platform: arm-linux-gnueabi
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: arm-unknown-linux-gnueabi
           - platform: arm-linux-gnueabihf
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: arm-unknown-linux-gnueabihf
           - platform: arm-linux-musleabi
             cross: true
-            os: uubuntu-24.04-arm
+            os: ubuntu-latest
             target: arm-unknown-linux-musleabi
           - platform: arm-linux-musleabihf
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: arm-unknown-linux-musleabihf
           - platform: armv5te-linux-gnueabi
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv5te-unknown-linux-gnueabi
           - platform: armv5te-linux-musleabi
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv5te-unknown-linux-musleabi
           - platform: armv7-android
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv7-linux-androideabi
           - platform: armv7-linux-gnueabi
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv7-unknown-linux-gnueabi
           - platform: armv7-linux-gnueabihf
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
           - platform: armv7-linux-musleabi
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv7-unknown-linux-musleabi
           - platform: armv7-linux-musleabihf
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
           - platform: i586-linux-gnu
             cross: true
-            os: ubuntu-24.04-arm
+            os: ubuntu-latest
             target: i586-unknown-linux-gnu
           - platform: i586-linux-musl
             cross: true
