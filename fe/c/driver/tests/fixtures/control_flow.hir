@@ -1,0 +1,43 @@
+module
+  function main() -> i32
+    block
+      var i: i32
+      var sum: i32
+      expr-stmt
+        assign
+          name `sum`
+          int 0
+      for
+        init
+          expr-stmt
+            assign
+              name `i`
+              int 0
+        cond
+          binary `<`
+            name `i`
+            int 10
+        step
+          assign
+            name `i`
+            binary `+`
+              name `i`
+              int 1
+        body
+          block
+            expr-stmt
+              assign
+                name `sum`
+                binary `+`
+                  name `sum`
+                  name `i`
+      if
+        name `sum`
+      then
+        block
+          return
+            name `sum`
+      else
+        block
+          return
+            int 0

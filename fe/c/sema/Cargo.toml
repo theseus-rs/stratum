@@ -1,0 +1,24 @@
+[package]
+name = "stratum_c_sema"
+description = "Semantic analysis (symbols and types) for the Stratum C frontend"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_arena.workspace = true
+stratum_diagnostics.workspace = true
+stratum_c_ast.workspace = true
+stratum_utils.workspace = true
+
+[dev-dependencies]
+stratum_c_lexer.workspace = true
+stratum_c_parser.workspace = true
+
+[lints]
+workspace = true

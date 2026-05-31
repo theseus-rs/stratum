@@ -1,0 +1,77 @@
+[workspace]
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+pr_labels = ["release"]
+pr_name = "chore: release stratum v{{ version }}"
+release_always = false
+repo_url = "https://github.com/theseus-rs/stratum"
+
+[[package]]
+name = "stratum_arena"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_diagnostics"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_hir"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_utils"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_ast"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_bridge"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_lexer"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_parser"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_preprocessor"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_sema"
+version_group = "stratum"
+
+[[package]]
+name = "stratum_c_driver"
+changelog_include = [
+    "stratum_arena",
+    "stratum_diagnostics",
+    "stratum_hir",
+    "stratum_utils",
+    "stratum_c_ast",
+    "stratum_c_bridge",
+    "stratum_c_lexer",
+    "stratum_c_parser",
+    "stratum_c_preprocessor",
+    "stratum_c_sema",
+]
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+git_release_draft = true
+git_release_enable = true
+git_release_latest = false
+git_release_name = "v{{ version }}"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+version_group = "stratum"
+
+[changelog]
+protect_breaking_commits = true
+sort_commits = "newest"
+tag_pattern = "v[0-9].*"

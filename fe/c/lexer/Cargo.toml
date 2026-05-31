@@ -1,0 +1,18 @@
+[package]
+name = "stratum_c_lexer"
+description = "C89/C99 lexer producing preprocessing tokens for Stratum"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_arena.workspace = true
+stratum_diagnostics.workspace = true
+
+[lints]
+workspace = true

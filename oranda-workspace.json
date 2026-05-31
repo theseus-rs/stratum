@@ -1,0 +1,14 @@
+{
+  "build": {
+    "path_prefix": "stratum"
+  },
+  "workspace": {
+    "name": "stratum",
+    "members": [
+      {
+        "slug": "stratum",
+        "path": "./stratum"
+      }
+    ]
+  }
+}

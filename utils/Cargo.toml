@@ -1,0 +1,17 @@
+[package]
+name = "stratum_utils"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+hashbrown.workspace = true
+rustc-hash.workspace = true
+
+[lints]
+workspace = true

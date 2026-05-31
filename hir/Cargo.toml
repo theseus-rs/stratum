@@ -1,0 +1,18 @@
+[package]
+name = "stratum_hir"
+description = "Shared high-level intermediate representation for the Stratum compiler"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_arena.workspace = true
+stratum_diagnostics.workspace = true
+
+[lints]
+workspace = true

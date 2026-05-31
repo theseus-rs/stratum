@@ -1,0 +1,33 @@
+[package]
+name = "stratum_c_driver"
+description = "Command-line driver running the Stratum C frontend through to HIR"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["std"]
+std = ["stratum_c_preprocessor/std"]
+
+[[bin]]
+name = "stratum-c"
+path = "src/main.rs"
+required-features = ["std"]
+
+[dependencies]
+stratum_arena.workspace = true
+stratum_diagnostics.workspace = true
+stratum_c_lexer.workspace = true
+stratum_c_preprocessor.workspace = true
+stratum_c_ast.workspace = true
+stratum_c_parser.workspace = true
+stratum_c_sema.workspace = true
+stratum_c_bridge.workspace = true
+
+[lints]
+workspace = true

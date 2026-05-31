@@ -1,0 +1,14 @@
+module
+  function compute(n: i32) -> i32
+    block
+      var total: i32
+      expr-stmt
+        assign
+          name `total`
+          binary `+`
+            binary `*`
+              name `n`
+              name `n`
+            int 5
+      return
+        name `total`

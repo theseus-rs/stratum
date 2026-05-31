@@ -1,0 +1,7 @@
+module
+  function add(a: i32, b: i32) -> i32
+    block
+      return
+        binary `+`
+          name `a`
+          name `b`
