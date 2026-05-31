@@ -8,6 +8,7 @@ extern crate std;
 
 #[doc(hidden)]
 pub mod alloc_prelude {
+    pub use alloc::boxed::Box;
     pub use alloc::format;
     pub use alloc::string::{String, ToString};
     pub use alloc::vec;
@@ -22,8 +23,9 @@ mod tree;
 
 pub use error::{Error, Result};
 pub use node::{
-    CNode, DeclSpecifiers, Declarator, Derivation, Designator, Enumerator, FieldDecl,
-    InitDeclarator, InitItem, ParamDecl, StorageClass, TypeName, TypeQualifier, TypeSpecifier,
+    AlignmentSpecifier, CNode, DeclSpecifiers, Declarator, Derivation, Designator, Enumerator,
+    FieldDecl, GenericAssociation, InitDeclarator, InitItem, ParamDecl, StorageClass, TypeName,
+    TypeQualifier, TypeSpecifier, TypeofOperand,
 };
 pub use ops::{AssignOp, BinaryOp, PostfixOp, UnaryOp};
 pub use tree::{CAst, CNodeId};

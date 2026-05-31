@@ -50,6 +50,12 @@ impl CAst {
                     .collect();
                 format!("(decl {})", names.join(" "))
             }
+            CNode::StaticAssert { cond, message } => {
+                let message = message
+                    .map(|m| format!(" {:?}", self.resolve(m).unwrap_or("<invalid>")))
+                    .unwrap_or_default();
+                format!("(static-assert {}{})", self.dump(*cond), message)
+            }
             CNode::Compound(items) => self.sexpr("block", items),
             CNode::ExprStmt(Some(e)) => format!("(expr {})", self.dump(*e)),
             CNode::ExprStmt(None) => "(expr)".to_string(),
@@ -113,6 +119,8 @@ impl CAst {
             CNode::IntLiteral(s) | CNode::CharLiteral(s) | CNode::FloatLiteral(s) => {
                 self.resolve(*s).unwrap_or("<invalid>").to_string()
             }
+            CNode::BoolLiteral(value) => value.to_string(),
+            CNode::Nullptr => "nullptr".to_string(),
             CNode::StringLiteral(s) => format!("{:?}", self.resolve(*s).unwrap_or("<invalid>")),
             CNode::Unary { op, operand } => format!("({op:?} {})", self.dump(*operand)),
             CNode::Postfix { op, operand } => format!("({op:?} {})", self.dump(*operand)),
@@ -154,6 +162,25 @@ impl CAst {
             CNode::Cast { expr, .. } => format!("(cast {})", self.dump(*expr)),
             CNode::SizeofExpr(e) => format!("(sizeof {})", self.dump(*e)),
             CNode::SizeofType(_) => "(sizeof-type)".to_string(),
+            CNode::AlignofExpr(e) => format!("(alignof {})", self.dump(*e)),
+            CNode::AlignofType(_) => "(alignof-type)".to_string(),
+            CNode::GenericSelection {
+                controlling,
+                associations,
+            } => {
+                let parts: Vec<String> = associations
+                    .iter()
+                    .map(|assoc| {
+                        let key = if assoc.type_name.is_some() {
+                            "type"
+                        } else {
+                            "default"
+                        };
+                        format!("({key} {})", self.dump(assoc.expr))
+                    })
+                    .collect();
+                format!("(generic {} {})", self.dump(*controlling), parts.join(" "))
+            }
             CNode::InitList(items) => self.dump_init_list(items),
             CNode::CompoundLiteral { init, .. } => format!("(compound-lit {})", self.dump(*init)),
             _ => "<stmt>".to_string(),

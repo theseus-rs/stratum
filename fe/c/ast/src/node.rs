@@ -22,6 +22,10 @@ pub enum StorageClass {
     Auto,
     /// `register`
     Register,
+    /// C11 `_Thread_local` / C23 `thread_local`.
+    ThreadLocal,
+    /// C23 `constexpr`.
+    Constexpr,
 }
 
 /// A type qualifier.
@@ -33,6 +37,17 @@ pub enum TypeQualifier {
     Volatile,
     /// `restrict`
     Restrict,
+    /// C11 `_Atomic` used as a qualifier.
+    Atomic,
+}
+
+/// A C11/C23 alignment specifier attached to declaration specifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlignmentSpecifier {
+    /// `_Alignas(type-name)` / `alignas(type-name)`.
+    Type(TypeName),
+    /// `_Alignas(constant-expression)` / `alignas(constant-expression)`.
+    Expr(CNodeId),
 }
 
 /// A single type specifier, including aggregate and `typedef`-name specifiers.
@@ -60,6 +75,25 @@ pub enum TypeSpecifier {
     Bool,
     /// `_Complex`
     Complex,
+    /// C99 `_Imaginary`.
+    Imaginary,
+    /// C11 `_Atomic(type-name)`.
+    Atomic(Box<TypeName>),
+    /// C23 `_BitInt(width)`.
+    BitInt(CNodeId),
+    /// C23 `_Decimal32`.
+    Decimal32,
+    /// C23 `_Decimal64`.
+    Decimal64,
+    /// C23 `_Decimal128`.
+    Decimal128,
+    /// C23 `typeof(...)` / `typeof_unqual(...)`.
+    Typeof {
+        /// The operand form used by the typeof specifier.
+        operand: TypeofOperand,
+        /// Whether the spelling was `typeof_unqual`.
+        unqualified: bool,
+    },
     /// A `struct` type, with an optional tag and optional field list.
     Struct {
         /// The tag name, if present.
@@ -114,8 +148,21 @@ pub struct DeclSpecifiers {
     pub qualifiers: Vec<TypeQualifier>,
     /// Type specifiers, in source order.
     pub type_specifiers: Vec<TypeSpecifier>,
+    /// Alignment specifiers, in source order.
+    pub alignments: Vec<AlignmentSpecifier>,
     /// Whether the `inline` function specifier was present.
     pub inline: bool,
+    /// Whether the C11 `_Noreturn` function specifier was present.
+    pub noreturn: bool,
+}
+
+/// The operand accepted by a C23 `typeof` type specifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeofOperand {
+    /// `typeof(type-name)`.
+    Type(Box<TypeName>),
+    /// `typeof(expression)`.
+    Expr(CNodeId),
 }
 
 /// A type derivation applied around a declared name, innermost first.
@@ -218,6 +265,13 @@ pub enum CNode {
         /// The declarators with optional initializers.
         declarators: Vec<InitDeclarator>,
     },
+    /// A C11/C23 static assertion declaration.
+    StaticAssert {
+        /// The constant expression being asserted.
+        cond: CNodeId,
+        /// The optional diagnostic message.
+        message: Option<Symbol>,
+    },
 
     /// A `{ ... }` block.
     Compound(Vec<CNodeId>),
@@ -300,6 +354,10 @@ pub enum CNode {
     FloatLiteral(Symbol),
     /// A character literal, kept as its raw spelling.
     CharLiteral(Symbol),
+    /// A C23 boolean constant.
+    BoolLiteral(bool),
+    /// A C23 `nullptr` constant.
+    Nullptr,
     /// A string literal, kept as its raw spelling.
     StringLiteral(Symbol),
     /// A prefix unary operation.
@@ -384,6 +442,17 @@ pub enum CNode {
     SizeofExpr(CNodeId),
     /// `sizeof(T)`.
     SizeofType(TypeName),
+    /// C11 `_Alignof(type)` / C23 `alignof(type)`.
+    AlignofType(TypeName),
+    /// C23 `alignof expr`.
+    AlignofExpr(CNodeId),
+    /// A C11 generic selection.
+    GenericSelection {
+        /// The controlling assignment-expression.
+        controlling: CNodeId,
+        /// The generic associations.
+        associations: Vec<GenericAssociation>,
+    },
     /// A braced initialiser list `{ ... }`, possibly with C99 designators.
     InitList(Vec<InitItem>),
     /// A C99 compound literal `(T){ ... }`.
@@ -393,4 +462,13 @@ pub enum CNode {
         /// The braced initialiser (a [`CNode::InitList`]).
         init: CNodeId,
     },
+}
+
+/// A single association in a C11 generic selection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericAssociation {
+    /// `None` for the `default` association.
+    pub type_name: Option<TypeName>,
+    /// The selected expression for this association.
+    pub expr: CNodeId,
 }

@@ -8,7 +8,7 @@ use stratum_c_ast::{
     CAst, CNode, CNodeId, DeclSpecifiers, Declarator, Designator, InitDeclarator, InitItem,
     StorageClass,
 };
-use stratum_c_lexer::{Keyword, Punctuator, Token, TokenKind};
+use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
 use stratum_diagnostics::{Diagnostic, FileId, Label, Span};
 
 /// The result of parsing a translation unit.
@@ -48,7 +48,20 @@ pub(crate) type PResult<T> = Result<T, ParseError>;
 ///
 /// Returns an error if the parser cannot allocate the translation-unit root in the AST.
 pub fn parse(tokens: &[Token], interner: Interner) -> crate::Result<ParseResult> {
-    let mut parser = Parser::new(tokens, interner);
+    parse_with_dialect(tokens, interner, Dialect::DEFAULT)
+}
+
+/// Parses a finalized token stream under a specific ISO C dialect.
+///
+/// # Errors
+///
+/// Returns an error if the parser cannot allocate the translation-unit root in the AST.
+pub fn parse_with_dialect(
+    tokens: &[Token],
+    interner: Interner,
+    dialect: Dialect,
+) -> crate::Result<ParseResult> {
+    let mut parser = Parser::new_with_dialect(tokens, interner, dialect);
     parser.parse_translation_unit()?;
     Ok(ParseResult {
         ast: parser.ast,
@@ -62,16 +75,23 @@ pub(crate) struct Parser<'a> {
     pub(crate) ast: CAst,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) typedefs: Vec<HashSet<Symbol>>,
+    pub(crate) dialect: Dialect,
 }
 
 impl<'a> Parser<'a> {
+    #[cfg(test)]
     fn new(tokens: &'a [Token], interner: Interner) -> Self {
+        Self::new_with_dialect(tokens, interner, Dialect::DEFAULT)
+    }
+
+    fn new_with_dialect(tokens: &'a [Token], interner: Interner, dialect: Dialect) -> Self {
         Self {
             tokens,
             pos: 0,
             ast: CAst::with_interner(interner),
             diagnostics: Vec::new(),
             typedefs: vec![HashSet::default()],
+            dialect,
         }
     }
 
@@ -146,6 +166,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn is_attribute_start(&self) -> bool {
+        self.is_punct(Punctuator::LBracket)
+            && self.peek2_kind() == TokenKind::Punct(Punctuator::LBracket)
+    }
+
+    pub(crate) fn skip_attribute_specifiers(&mut self) -> PResult<()> {
+        while self.is_attribute_start() {
+            self.require(Dialect::C23, "attribute specifier")?;
+            self.bump(); // `[`
+            self.bump(); // `[`
+            let mut depth = 1usize;
+            while depth != 0 {
+                if self.at_eof() {
+                    return Err(self.error("unterminated attribute specifier"));
+                }
+                if self.is_attribute_start() {
+                    self.bump();
+                    self.bump();
+                    depth = depth.saturating_add(1);
+                } else if self.is_punct(Punctuator::RBracket)
+                    && self.peek2_kind() == TokenKind::Punct(Punctuator::RBracket)
+                {
+                    self.bump();
+                    self.bump();
+                    depth = depth.saturating_sub(1);
+                } else {
+                    self.bump();
+                }
+            }
+        }
+        Ok(())
+    }
+
     // --- Diagnostics & recovery ------------------------------------------------------------
 
     pub(crate) fn error(&mut self, message: &str) -> ParseError {
@@ -157,6 +210,21 @@ impl<'a> Parser<'a> {
         self.diagnostics
             .push(Diagnostic::error(message.to_string()).with_label(Label::new(span, "here")));
         ParseError
+    }
+
+    pub(crate) fn supports(&self, dialect: Dialect) -> bool {
+        self.dialect.supports(dialect)
+    }
+
+    pub(crate) fn require(&mut self, dialect: Dialect, feature: &str) -> PResult<()> {
+        if self.supports(dialect) {
+            Ok(())
+        } else {
+            Err(self.error(&format!(
+                "{feature} requires {} or later",
+                dialect.spelling()
+            )))
+        }
     }
 
     /// Skips tokens until just past the next `;` or balanced `}`, for panic-mode recovery.
@@ -217,6 +285,12 @@ impl<'a> Parser<'a> {
 
     /// Parses one external declaration (a function definition or a declaration).
     fn parse_external_declaration(&mut self) -> PResult<CNodeId> {
+        self.skip_attribute_specifiers()?;
+        if let TokenKind::Keyword(kw) = self.peek_kind()
+            && crate::decl::is_static_assert_keyword(kw)
+        {
+            return self.parse_static_assert();
+        }
         let start = self.peek().span;
         let specifiers = self.parse_decl_specifiers()?;
 
@@ -250,6 +324,38 @@ impl<'a> Parser<'a> {
             body,
         };
         Ok(self.ast.alloc(node, span)?)
+    }
+
+    pub(crate) fn parse_static_assert(&mut self) -> PResult<CNodeId> {
+        let kw = match self.peek_kind() {
+            TokenKind::Keyword(kw) if crate::decl::is_static_assert_keyword(kw) => kw,
+            _ => return Err(self.error("expected static assertion")),
+        };
+        let minimum = if kw == Keyword::C23StaticAssert {
+            Dialect::C23
+        } else {
+            Dialect::C11
+        };
+        self.require(minimum, "static assertion")?;
+        let start = self.bump().span;
+        self.expect_punct(Punctuator::LParen)?;
+        let cond = self.parse_conditional()?;
+        let message = if self.eat_punct(Punctuator::Comma) {
+            match self.bump().kind {
+                TokenKind::String(sym) => Some(sym),
+                _ => return Err(self.error("expected a string literal in static assertion")),
+            }
+        } else {
+            if !self.supports(Dialect::C23) {
+                return Err(self.error("message-less static assertion requires c23 or later"));
+            }
+            None
+        };
+        self.expect_punct(Punctuator::RParen)?;
+        let end = self.expect_punct(Punctuator::Semicolon)?;
+        Ok(self
+            .ast
+            .alloc(CNode::StaticAssert { cond, message }, start.to(end))?)
     }
 
     pub(crate) fn finish_declaration(
@@ -303,6 +409,9 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_brace_initializer(&mut self) -> PResult<CNodeId> {
         let start = self.expect_punct(Punctuator::LBrace)?;
         let mut items = Vec::new();
+        if self.is_punct(Punctuator::RBrace) && !self.supports(Dialect::C23) {
+            return Err(self.error("empty initializer requires c23 or later"));
+        }
         while !self.is_punct(Punctuator::RBrace) && !self.at_eof() {
             items.push(self.parse_init_item()?);
             if !self.eat_punct(Punctuator::Comma) {
@@ -340,6 +449,7 @@ impl<'a> Parser<'a> {
             }
         }
         if !designators.is_empty() {
+            self.require(Dialect::C99, "designated initializer")?;
             self.expect_punct(Punctuator::Assign)?;
         }
         Ok(designators)
@@ -377,5 +487,15 @@ mod tests {
         let mut parser = Parser::new(&tokens, Interner::new());
         assert!(parser.parse_designators().is_err());
         assert!(!parser.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn static_assert_entry_rejects_wrong_token_when_called_directly() {
+        let tokens = [Token {
+            kind: TokenKind::Punct(Punctuator::Semicolon),
+            span: span(),
+        }];
+        let mut parser = Parser::new(&tokens, Interner::new());
+        assert!(parser.parse_static_assert().is_err());
     }
 }

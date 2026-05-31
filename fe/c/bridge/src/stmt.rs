@@ -256,7 +256,7 @@ impl CLowering<'_> {
 mod tests {
     use super::CLowering;
     use crate::lower::lower;
-    use crate::test_utils::{TestResult, build, dump};
+    use crate::test_utils::{build, dump};
     use stratum_c_ast::{CAst, CNode};
     use stratum_diagnostics::{FileId, Span};
     use stratum_hir::HirContext;
@@ -266,98 +266,87 @@ mod tests {
     }
 
     #[test]
-    fn while_lowers_faithfully() -> TestResult {
-        let out = dump("void f(void) { while (1) { } }")?;
+    fn while_lowers_faithfully() {
+        let out = dump("void f(void) { while (1) { } }");
         assert!(out.contains("while"), "got: {out}");
         assert!(
             !out.contains("break"),
             "loop must not synthesise a break: {out}"
         );
-        Ok(())
     }
 
     #[test]
-    fn do_while_lowers_faithfully() -> TestResult {
-        let out = dump("void f(void) { do { } while (1); }")?;
+    fn do_while_lowers_faithfully() {
+        let out = dump("void f(void) { do { } while (1); }");
         assert!(out.contains("do-while"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn for_lowers_with_all_clauses() -> TestResult {
-        let out = dump("void f(void) { for (int i = 0; i < 10; i = i + 1) { } }")?;
+    fn for_lowers_with_all_clauses() {
+        let out = dump("void f(void) { for (int i = 0; i < 10; i = i + 1) { } }");
         assert!(out.contains("for"), "got: {out}");
         assert!(out.contains("init"), "got: {out}");
         assert!(out.contains("cond"), "got: {out}");
         assert!(out.contains("step"), "got: {out}");
         assert!(out.contains("body"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn for_init_with_multiple_declarators_wraps_in_block() -> TestResult {
-        let out = dump("void f(void) { for (int i = 0, j = 1; ; ) { } }")?;
+    fn for_init_with_multiple_declarators_wraps_in_block() {
+        let out = dump("void f(void) { for (int i = 0, j = 1; ; ) { } }");
         assert!(out.contains("init\n          block"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn if_else_lowers_to_conditional() -> TestResult {
-        let out = dump("void f(int x) { if (x) { return; } else { return; } }")?;
+    fn if_else_lowers_to_conditional() {
+        let out = dump("void f(int x) { if (x) { return; } else { return; } }");
         assert!(out.contains("if"));
         assert!(out.contains("then"));
         assert!(out.contains("else"));
-        Ok(())
     }
 
     #[test]
-    fn local_declaration_lowers_to_var() -> TestResult {
-        let out = dump("void f(void) { int x; }")?;
+    fn local_declaration_lowers_to_var() {
+        let out = dump("void f(void) { int x; }");
         assert!(out.contains("var x: i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn nested_compound_statement_lowers_to_nested_block() -> TestResult {
-        let out = dump("void f(void) { { ; } }")?;
+    fn nested_compound_statement_lowers_to_nested_block() {
+        let out = dump("void f(void) { { ; } }");
         assert!(out.contains("block\n      block"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn switch_case_default_lower_faithfully() -> TestResult {
-        let out = dump("void f(int x) { switch (x) { case 1: break; default: break; } }")?;
+    fn switch_case_default_lower_faithfully() {
+        let out = dump("void f(int x) { switch (x) { case 1: break; default: break; } }");
         assert!(out.contains("switch"), "got: {out}");
         assert!(out.contains("case"), "got: {out}");
         assert!(out.contains("default"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn label_and_goto_lower_faithfully() -> TestResult {
-        let out = dump("void f(void) { goto end; end: return; }")?;
+    fn label_and_goto_lower_faithfully() {
+        let out = dump("void f(void) { goto end; end: return; }");
         assert!(out.contains("goto end"), "got: {out}");
         assert!(out.contains("label end"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn continue_in_for_does_not_warn() -> TestResult {
-        let ast = build("void f(void) { for (int i = 0; i < 3; i = i + 1) { continue; } }")?;
-        let result = lower(&ast)?;
+    fn continue_in_for_does_not_warn() {
+        let ast = build("void f(void) { for (int i = 0; i < 3; i = i + 1) { continue; } }");
+        let result = lower(&ast).unwrap();
         assert!(
             result.diagnostics.is_empty(),
             "got: {:?}",
             result.diagnostics
         );
-        Ok(())
     }
 
     #[test]
-    fn empty_statement_is_preserved() -> TestResult {
-        let out = dump("void f(void) { ; }")?;
+    fn empty_statement_is_preserved() {
+        let out = dump("void f(void) { ; }");
         assert!(out.contains("empty-stmt"), "got: {out}");
-        Ok(())
     }
 
     #[test]

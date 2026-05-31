@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::{eprint, eprintln, print};
 
 use stratum_arena::Interner;
-use stratum_c_lexer::{Keyword, Punctuator, Token, TokenKind};
-use stratum_c_parser::{finalize, parse};
+use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
+use stratum_c_parser::{finalize_with_dialect, parse_with_dialect};
 #[cfg(feature = "std")]
 use stratum_c_preprocessor::FsIncludeResolver;
 use stratum_c_preprocessor::{IncludeResolver, preprocess};
@@ -71,6 +71,8 @@ pub struct Options {
     pub emit: Emit,
     /// Additional `#include` search directories (from `-I`).
     pub include_dirs: Vec<PathBuf>,
+    /// The ISO C dialect to enforce.
+    pub dialect: Dialect,
 }
 
 /// Parses command-line arguments (excluding the program name).
@@ -82,6 +84,7 @@ pub struct Options {
 pub fn parse_args(args: &[String]) -> core::result::Result<Options, String> {
     let mut emit = Emit::Hir;
     let mut include_dirs = Vec::new();
+    let mut dialect = Dialect::DEFAULT;
     let mut input: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -99,8 +102,18 @@ pub fn parse_args(args: &[String]) -> core::result::Result<Options, String> {
                     .ok_or_else(|| "-I requires a directory argument".to_string())?;
                 include_dirs.push(PathBuf::from(value));
             }
+            "--std" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--std requires an argument".to_string())?;
+                dialect = value.parse().map_err(|()| bad_std(value))?;
+            }
             other if other.starts_with("--emit=") => {
                 emit = Emit::from_str(&other["--emit=".len()..])?;
+            }
+            other if other.starts_with("--std=") => {
+                let value = &other["--std=".len()..];
+                dialect = value.parse().map_err(|()| bad_std(value))?;
             }
             other if other.starts_with("-I") => {
                 include_dirs.push(PathBuf::from(&other[2..]));
@@ -120,14 +133,20 @@ pub fn parse_args(args: &[String]) -> core::result::Result<Options, String> {
         input,
         emit,
         include_dirs,
+        dialect,
     })
+}
+
+#[cfg(feature = "std")]
+fn bad_std(value: &str) -> String {
+    format!("unknown --std `{value}` (expected c89, c99, c11, c17, or c23)")
 }
 
 /// Returns the usage string.
 #[must_use]
 #[cfg(feature = "std")]
 pub fn usage() -> String {
-    "usage: stratum-c [--emit pptokens|tokens|ast|hir] [-I <dir>]... <file.c>".to_string()
+    "usage: stratum-c [--std c89|c99|c11|c17|c23] [--emit pptokens|tokens|ast|hir] [-I <dir>]... <file.c>".to_string()
 }
 
 /// The outcome of compiling a single source string.
@@ -155,8 +174,26 @@ pub fn compile_source(
     emit: Emit,
     include_dirs: &[PathBuf],
 ) -> Result<CompileOutput> {
+    compile_source_with_dialect(name, source, emit, include_dirs, Dialect::DEFAULT)
+}
+
+/// Runs the full pipeline on an in-memory source string using `dialect`.
+///
+/// `include_dirs` supplies the angle/quote `#include` search path.
+///
+/// # Errors
+///
+/// Returns an error if source registration, parsing, symbol rendering, or lowering fails.
+#[cfg(feature = "std")]
+pub fn compile_source_with_dialect(
+    name: &str,
+    source: &str,
+    emit: Emit,
+    include_dirs: &[PathBuf],
+    dialect: Dialect,
+) -> Result<CompileOutput> {
     let mut resolver = FsIncludeResolver::new(include_dirs.to_vec());
-    compile_source_with_resolver(name, source, emit, &mut resolver)
+    compile_source_with_resolver_and_dialect(name, source, emit, &mut resolver, dialect)
 }
 
 /// Runs the full pipeline on an in-memory source string using a caller-supplied include resolver.
@@ -170,6 +207,21 @@ pub fn compile_source_with_resolver<R: IncludeResolver>(
     emit: Emit,
     resolver: &mut R,
 ) -> Result<CompileOutput> {
+    compile_source_with_resolver_and_dialect(name, source, emit, resolver, Dialect::DEFAULT)
+}
+
+/// Runs the full pipeline with a caller-supplied include resolver and dialect.
+///
+/// # Errors
+///
+/// Returns an error if source registration, parsing, symbol rendering, or lowering fails.
+pub fn compile_source_with_resolver_and_dialect<R: IncludeResolver>(
+    name: &str,
+    source: &str,
+    emit: Emit,
+    resolver: &mut R,
+    dialect: Dialect,
+) -> Result<CompileOutput> {
     let mut interner = Interner::new();
     let mut source_map = SourceMap::new();
     let file = source_map.add_root(name, source)?;
@@ -182,14 +234,14 @@ pub fn compile_source_with_resolver<R: IncludeResolver>(
         return Ok(finish(output, &diagnostics, &source_map));
     }
 
-    let finalized = finalize(&pp.tokens, &mut interner);
+    let finalized = finalize_with_dialect(&pp.tokens, &mut interner, dialect);
     diagnostics.extend(finalized.diagnostics);
     if emit == Emit::Tokens {
         let output = render_tokens(&finalized.tokens, &interner)?;
         return Ok(finish(output, &diagnostics, &source_map));
     }
 
-    let parsed = parse(&finalized.tokens, interner)?;
+    let parsed = parse_with_dialect(&finalized.tokens, interner, dialect)?;
     diagnostics.extend(parsed.diagnostics);
     if emit == Emit::Ast {
         let output = format!("{}\n", parsed.ast.dump_root());
@@ -251,11 +303,12 @@ pub fn run(options: &Options) -> i32 {
         }
     };
     let name = options.input.to_string_lossy().into_owned();
-    emit_run_result(compile_source(
+    emit_run_result(compile_source_with_dialect(
         &name,
         &source,
         options.emit,
         &options.include_dirs,
+        options.dialect,
     ))
 }
 
@@ -278,13 +331,14 @@ fn emit_run_result(result: Result<CompileOutput>) -> i32 {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::{
-        CompileOutput, Emit, Error, Options, compile_source, emit_run_result, parse_args,
-        render_tokens, run,
+        CompileOutput, Emit, Error, Options, compile_source, compile_source_with_resolver,
+        emit_run_result, parse_args, render_tokens, run,
     };
     use crate::alloc_prelude::*;
     use std::path::PathBuf;
     use stratum_arena::Interner;
-    use stratum_c_lexer::{Punctuator, Token, TokenKind};
+    use stratum_c_lexer::{Dialect, Punctuator, Token, TokenKind};
+    use stratum_c_preprocessor::MapIncludeResolver;
     use stratum_diagnostics::{FileId, Span};
 
     #[test]
@@ -295,10 +349,13 @@ mod tests {
             "-Iinclude".to_string(),
             "-I".to_string(),
             "more".to_string(),
+            "--std".to_string(),
+            "c11".to_string(),
             "input.c".to_string(),
         ];
         let options = parse_args(&args).unwrap();
         assert_eq!(options.emit, Emit::Tokens);
+        assert_eq!(options.dialect, Dialect::C11);
         assert_eq!(options.input, PathBuf::from("input.c"));
         assert_eq!(
             options.include_dirs,
@@ -312,6 +369,8 @@ mod tests {
             &["--help"],
             &["--emit"],
             &["--emit=bad"],
+            &["--std"],
+            &["--std=bad"],
             &["-I"],
             &["--bad"],
             &["a.c", "b.c"],
@@ -334,6 +393,11 @@ mod tests {
         let bad = compile_source("bad.c", "int f(){ return 0 }", Emit::Hir, &[]).unwrap();
         assert!(bad.had_errors);
         assert!(!bad.diagnostics.is_empty());
+
+        let mut resolver = MapIncludeResolver::new();
+        let output =
+            compile_source_with_resolver("t.c", "int x = 1;\n", Emit::Ast, &mut resolver).unwrap();
+        assert!(!output.had_errors);
     }
 
     #[test]
@@ -397,6 +461,7 @@ mod tests {
             input: PathBuf::from("__definitely_missing__.c"),
             emit: Emit::Hir,
             include_dirs: Vec::new(),
+            dialect: Dialect::DEFAULT,
         };
         assert_eq!(run(&options), 2);
     }

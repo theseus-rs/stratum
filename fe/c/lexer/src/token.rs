@@ -3,6 +3,65 @@
 use stratum_arena::Symbol;
 use stratum_diagnostics::Span;
 
+/// A supported ISO C language dialect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Dialect {
+    /// ISO C90, commonly called C89.
+    C89,
+    /// ISO C99.
+    C99,
+    /// ISO C11.
+    C11,
+    /// ISO C17/C18.
+    C17,
+    /// ISO C23.
+    C23,
+}
+
+impl Dialect {
+    /// The default dialect used by convenience APIs.
+    pub const DEFAULT: Self = Self::C23;
+
+    /// Returns the canonical command-line spelling.
+    #[must_use]
+    pub const fn spelling(self) -> &'static str {
+        match self {
+            Self::C89 => "c89",
+            Self::C99 => "c99",
+            Self::C11 => "c11",
+            Self::C17 => "c17",
+            Self::C23 => "c23",
+        }
+    }
+
+    /// Returns `true` if this dialect includes a feature introduced in `minimum`.
+    #[must_use]
+    pub const fn supports(self, minimum: Self) -> bool {
+        self as u8 >= minimum as u8
+    }
+}
+
+impl core::str::FromStr for Dialect {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "c89" | "c90" | "iso9899:1990" => Ok(Self::C89),
+            "c99" | "iso9899:1999" => Ok(Self::C99),
+            "c11" | "iso9899:2011" => Ok(Self::C11),
+            "c17" | "c18" | "iso9899:2017" | "iso9899:2018" => Ok(Self::C17),
+            "c23" | "c2x" | "iso9899:2024" => Ok(Self::C23),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Default for Dialect {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// A C punctuator (operator or separator).
 ///
 /// Digraphs (`<:`, `:>`, `<%`, `%>`, `%:`, `%:%:`) are normalised to their canonical
@@ -207,12 +266,62 @@ pub enum Keyword {
     Complex,
     /// C99 `_Imaginary`.
     Imaginary,
+    /// C11 `_Alignas`.
+    Alignas,
+    /// C11 `_Alignof`.
+    Alignof,
+    /// C11 `_Atomic`.
+    Atomic,
+    /// C11 `_Generic`.
+    Generic,
+    /// C11 `_Noreturn`.
+    Noreturn,
+    /// C11 `_Static_assert`.
+    StaticAssert,
+    /// C11 `_Thread_local`.
+    ThreadLocal,
+    /// C23 `_BitInt`.
+    BitInt,
+    /// C23 `_Decimal32`.
+    Decimal32,
+    /// C23 `_Decimal64`.
+    Decimal64,
+    /// C23 `_Decimal128`.
+    Decimal128,
+    /// C23 `alignas`.
+    C23Alignas,
+    /// C23 `alignof`.
+    C23Alignof,
+    /// C23 `bool`.
+    C23Bool,
+    /// C23 `constexpr`.
+    Constexpr,
+    /// C23 `false`.
+    False,
+    /// C23 `nullptr`.
+    Nullptr,
+    /// C23 `static_assert`.
+    C23StaticAssert,
+    /// C23 `thread_local`.
+    C23ThreadLocal,
+    /// C23 `true`.
+    True,
+    /// C23 `typeof`.
+    Typeof,
+    /// C23 `typeof_unqual`.
+    TypeofUnqual,
 }
 
 impl Keyword {
     /// Returns the keyword matching `text`, if any.
     #[must_use]
     pub fn from_identifier(text: &str) -> Option<Self> {
+        Self::from_identifier_in(text, Dialect::DEFAULT)
+    }
+
+    /// Returns the keyword matching `text` in `dialect`, if any.
+    #[must_use]
+    pub fn from_identifier_in(text: &str, dialect: Dialect) -> Option<Self> {
         let keyword = match text {
             "auto" => Keyword::Auto,
             "break" => Keyword::Break,
@@ -230,11 +339,9 @@ impl Keyword {
             "for" => Keyword::For,
             "goto" => Keyword::Goto,
             "if" => Keyword::If,
-            "inline" => Keyword::Inline,
             "int" => Keyword::Int,
             "long" => Keyword::Long,
             "register" => Keyword::Register,
-            "restrict" => Keyword::Restrict,
             "return" => Keyword::Return,
             "short" => Keyword::Short,
             "signed" => Keyword::Signed,
@@ -248,9 +355,33 @@ impl Keyword {
             "void" => Keyword::Void,
             "volatile" => Keyword::Volatile,
             "while" => Keyword::While,
-            "_Bool" => Keyword::Bool,
-            "_Complex" => Keyword::Complex,
-            "_Imaginary" => Keyword::Imaginary,
+            "inline" if dialect.supports(Dialect::C99) => Keyword::Inline,
+            "restrict" if dialect.supports(Dialect::C99) => Keyword::Restrict,
+            "_Bool" if dialect.supports(Dialect::C99) => Keyword::Bool,
+            "_Complex" if dialect.supports(Dialect::C99) => Keyword::Complex,
+            "_Imaginary" if dialect.supports(Dialect::C99) => Keyword::Imaginary,
+            "_Alignas" if dialect.supports(Dialect::C11) => Keyword::Alignas,
+            "_Alignof" if dialect.supports(Dialect::C11) => Keyword::Alignof,
+            "_Atomic" if dialect.supports(Dialect::C11) => Keyword::Atomic,
+            "_Generic" if dialect.supports(Dialect::C11) => Keyword::Generic,
+            "_Noreturn" if dialect.supports(Dialect::C11) => Keyword::Noreturn,
+            "_Static_assert" if dialect.supports(Dialect::C11) => Keyword::StaticAssert,
+            "_Thread_local" if dialect.supports(Dialect::C11) => Keyword::ThreadLocal,
+            "_BitInt" if dialect.supports(Dialect::C23) => Keyword::BitInt,
+            "_Decimal32" if dialect.supports(Dialect::C23) => Keyword::Decimal32,
+            "_Decimal64" if dialect.supports(Dialect::C23) => Keyword::Decimal64,
+            "_Decimal128" if dialect.supports(Dialect::C23) => Keyword::Decimal128,
+            "alignas" if dialect.supports(Dialect::C23) => Keyword::C23Alignas,
+            "alignof" if dialect.supports(Dialect::C23) => Keyword::C23Alignof,
+            "bool" if dialect.supports(Dialect::C23) => Keyword::C23Bool,
+            "constexpr" if dialect.supports(Dialect::C23) => Keyword::Constexpr,
+            "false" if dialect.supports(Dialect::C23) => Keyword::False,
+            "nullptr" if dialect.supports(Dialect::C23) => Keyword::Nullptr,
+            "static_assert" if dialect.supports(Dialect::C23) => Keyword::C23StaticAssert,
+            "thread_local" if dialect.supports(Dialect::C23) => Keyword::C23ThreadLocal,
+            "true" if dialect.supports(Dialect::C23) => Keyword::True,
+            "typeof" if dialect.supports(Dialect::C23) => Keyword::Typeof,
+            "typeof_unqual" if dialect.supports(Dialect::C23) => Keyword::TypeofUnqual,
             _ => return None,
         };
         Some(keyword)
@@ -297,6 +428,28 @@ impl Keyword {
             Keyword::Bool => "_Bool",
             Keyword::Complex => "_Complex",
             Keyword::Imaginary => "_Imaginary",
+            Keyword::Alignas => "_Alignas",
+            Keyword::Alignof => "_Alignof",
+            Keyword::Atomic => "_Atomic",
+            Keyword::Generic => "_Generic",
+            Keyword::Noreturn => "_Noreturn",
+            Keyword::StaticAssert => "_Static_assert",
+            Keyword::ThreadLocal => "_Thread_local",
+            Keyword::BitInt => "_BitInt",
+            Keyword::Decimal32 => "_Decimal32",
+            Keyword::Decimal64 => "_Decimal64",
+            Keyword::Decimal128 => "_Decimal128",
+            Keyword::C23Alignas => "alignas",
+            Keyword::C23Alignof => "alignof",
+            Keyword::C23Bool => "bool",
+            Keyword::Constexpr => "constexpr",
+            Keyword::False => "false",
+            Keyword::Nullptr => "nullptr",
+            Keyword::C23StaticAssert => "static_assert",
+            Keyword::C23ThreadLocal => "thread_local",
+            Keyword::True => "true",
+            Keyword::Typeof => "typeof",
+            Keyword::TypeofUnqual => "typeof_unqual",
         }
     }
 }

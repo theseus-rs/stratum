@@ -75,7 +75,7 @@ impl CLowering<'_> {
     }
 
     fn base_hir_type(
-        &self,
+        &mut self,
         cx: &mut HirContext,
         specifiers: &DeclSpecifiers,
     ) -> crate::error::Result<HirType> {
@@ -90,6 +90,15 @@ impl CLowering<'_> {
         }
         if specs.contains(&TypeSpecifier::Bool) {
             return Ok(HirType::Bool);
+        }
+        if specs.contains(&TypeSpecifier::Decimal128) {
+            return Ok(HirType::Float { bits: 128 });
+        }
+        if specs.contains(&TypeSpecifier::Decimal64) {
+            return Ok(HirType::Float { bits: 64 });
+        }
+        if specs.contains(&TypeSpecifier::Decimal32) {
+            return Ok(HirType::Float { bits: 32 });
         }
         if specs.contains(&TypeSpecifier::Double) {
             return Ok(HirType::Float { bits: 64 });
@@ -110,7 +119,7 @@ impl CLowering<'_> {
     /// Resolves a `struct`/`union`/`enum` tag to a [`HirType::Tag`] or a `typedef` name to a
     /// [`HirType::Named`].
     fn tagged_type(
-        &self,
+        &mut self,
         cx: &mut HirContext,
         specs: &[TypeSpecifier],
     ) -> crate::error::Result<Option<HirType>> {
@@ -129,10 +138,20 @@ impl CLowering<'_> {
                 TypeSpecifier::Enum { tag, .. } => {
                     return Ok(Some(self.tag_type(cx, TagKind::Enum, *tag)?));
                 }
+                TypeSpecifier::Atomic(type_name) => {
+                    let specifiers = &type_name.specifiers;
+                    let derivations = &type_name.declarator.derivations;
+                    let ty = self.lower_type(cx, specifiers, derivations)?;
+                    return Ok(Some(Self::hir_type_clone(cx, ty)));
+                }
                 _ => {}
             }
         }
         Ok(None)
+    }
+
+    fn hir_type_clone(cx: &HirContext, id: HirTypeId) -> HirType {
+        cx.ty(id).clone()
     }
 
     fn tag_type(
@@ -185,6 +204,7 @@ fn qualifiers_from(quals: &[TypeQualifier]) -> Qualifiers {
             TypeQualifier::Const => result.is_const = true,
             TypeQualifier::Volatile => result.is_volatile = true,
             TypeQualifier::Restrict => result.is_restrict = true,
+            TypeQualifier::Atomic => result.is_atomic = true,
         }
     }
     result
@@ -194,7 +214,7 @@ fn qualifiers_from(quals: &[TypeQualifier]) -> Qualifiers {
 mod tests {
     use super::{CLowering, qualifiers_from};
     use crate::alloc_prelude::*;
-    use crate::test_utils::{TestResult, dump};
+    use crate::test_utils::dump;
     use stratum_c_ast::{
         CAst, DeclSpecifiers, Declarator, Derivation, ParamDecl, TypeQualifier, TypeSpecifier,
     };
@@ -208,44 +228,48 @@ mod tests {
     }
 
     #[test]
-    fn pointer_and_array_types() -> TestResult {
-        let out = dump("void f(void) { int *p; int a[3]; }")?;
+    fn pointer_and_array_types() {
+        let out = dump("void f(void) { int *p; int a[3]; }");
         assert!(out.contains("var p: *i32"), "got: {out}");
         assert!(out.contains("var a: [i32; 3]"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn array_of_pointers_type() -> TestResult {
-        let out = dump("void f(void) { int *a[3]; }")?;
+    fn array_of_pointers_type() {
+        let out = dump("void f(void) { int *a[3]; }");
         assert!(out.contains("var a: [*i32; 3]"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn qualified_types_are_preserved() -> TestResult {
-        let out = dump("void f(void) { const int x; volatile int y; }")?;
+    fn qualified_types_are_preserved() {
+        let out = dump("void f(void) { const int x; volatile int y; _Atomic int z; }");
         assert!(out.contains("var x: const i32"), "got: {out}");
         assert!(out.contains("var y: volatile i32"), "got: {out}");
-        Ok(())
+        assert!(out.contains("var z: _Atomic i32"), "got: {out}");
     }
 
     #[test]
-    fn function_returning_pointer_type() -> TestResult {
-        let out = dump("int *f(void) { return 0; }")?;
+    fn c23_decimal_types_lower_to_float_widths() {
+        let out = dump("void f(void) { _Decimal32 d32; _Decimal64 d64; _Decimal128 d128; }");
+        assert!(out.contains("var d32: f32"), "got: {out}");
+        assert!(out.contains("var d64: f64"), "got: {out}");
+        assert!(out.contains("var d128: f128"), "got: {out}");
+    }
+
+    #[test]
+    fn function_returning_pointer_type() {
+        let out = dump("int *f(void) { return 0; }");
         assert!(out.contains("-> *i32"), "got: {out}");
-        Ok(())
     }
 
     #[test]
-    fn unsigned_and_long_widths() -> TestResult {
-        let out = dump("void f(void) { unsigned int u; long l; long long ll; short s; char c; }")?;
+    fn unsigned_and_long_widths() {
+        let out = dump("void f(void) { unsigned int u; long l; long long ll; short s; char c; }");
         assert!(out.contains("var u: u32"), "got: {out}");
         assert!(out.contains("var l: i64"), "got: {out}");
         assert!(out.contains("var ll: i64"), "got: {out}");
         assert!(out.contains("var s: i16"), "got: {out}");
         assert!(out.contains("var c: i8"), "got: {out}");
-        Ok(())
     }
 
     #[test]
@@ -341,11 +365,29 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(hir.ty(named_ty), HirType::Named(_)));
+
+        let atomic_ty = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Atomic(Box::new(
+                        stratum_c_ast::TypeName {
+                            specifiers: int_specs(),
+                            declarator: Declarator::default(),
+                        },
+                    ))],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(hir.ty(atomic_ty), HirType::Int { .. }));
     }
 
     #[test]
     fn qualifier_conversion_covers_restrict() {
-        let quals = qualifiers_from(&[TypeQualifier::Restrict]);
+        let quals = qualifiers_from(&[TypeQualifier::Restrict, TypeQualifier::Atomic]);
         assert!(quals.is_restrict);
+        assert!(quals.is_atomic);
     }
 }

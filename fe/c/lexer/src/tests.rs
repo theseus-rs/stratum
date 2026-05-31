@@ -1,7 +1,7 @@
 //! Unit tests for the C lexer.
 
 use crate::alloc_prelude::*;
-use crate::{Keyword, PpTokenKind, Punctuator, lex};
+use crate::{Dialect, Keyword, PpTokenKind, Punctuator, lex};
 use stratum_arena::Interner;
 use stratum_diagnostics::{FileId, SourceMap};
 
@@ -284,12 +284,66 @@ fn all_keywords_round_trip_from_identifier() {
         (Keyword::Bool, "_Bool"),
         (Keyword::Complex, "_Complex"),
         (Keyword::Imaginary, "_Imaginary"),
+        (Keyword::Alignas, "_Alignas"),
+        (Keyword::Alignof, "_Alignof"),
+        (Keyword::Atomic, "_Atomic"),
+        (Keyword::Generic, "_Generic"),
+        (Keyword::Noreturn, "_Noreturn"),
+        (Keyword::StaticAssert, "_Static_assert"),
+        (Keyword::ThreadLocal, "_Thread_local"),
+        (Keyword::BitInt, "_BitInt"),
+        (Keyword::Decimal32, "_Decimal32"),
+        (Keyword::Decimal64, "_Decimal64"),
+        (Keyword::Decimal128, "_Decimal128"),
+        (Keyword::C23Alignas, "alignas"),
+        (Keyword::C23Alignof, "alignof"),
+        (Keyword::C23Bool, "bool"),
+        (Keyword::Constexpr, "constexpr"),
+        (Keyword::False, "false"),
+        (Keyword::Nullptr, "nullptr"),
+        (Keyword::C23StaticAssert, "static_assert"),
+        (Keyword::C23ThreadLocal, "thread_local"),
+        (Keyword::True, "true"),
+        (Keyword::Typeof, "typeof"),
+        (Keyword::TypeofUnqual, "typeof_unqual"),
     ];
     for (keyword, spelling) in cases {
         assert_eq!(keyword.spelling(), spelling);
         assert_eq!(Keyword::from_identifier(spelling), Some(keyword));
     }
     assert_eq!(Keyword::from_identifier("not_a_keyword"), None);
+}
+
+#[test]
+fn dialect_keyword_gate_keeps_future_keywords_as_identifiers() {
+    assert_eq!("c90".parse::<Dialect>(), Ok(Dialect::C89));
+    assert_eq!("c18".parse::<Dialect>(), Ok(Dialect::C17));
+    assert_eq!("c2x".parse::<Dialect>(), Ok(Dialect::C23));
+    assert_eq!("gnu11".parse::<Dialect>(), Err(()));
+    assert_eq!(Dialect::default(), Dialect::C23);
+    assert_eq!(Dialect::C89.spelling(), "c89");
+    assert_eq!(Dialect::C99.spelling(), "c99");
+    assert_eq!(Dialect::C11.spelling(), "c11");
+    assert_eq!(Dialect::C17.spelling(), "c17");
+    assert_eq!(Dialect::C23.spelling(), "c23");
+    assert!(Dialect::C23.supports(Dialect::C11));
+    assert!(!Dialect::C99.supports(Dialect::C11));
+
+    assert_eq!(Keyword::from_identifier_in("inline", Dialect::C89), None);
+    assert_eq!(
+        Keyword::from_identifier_in("inline", Dialect::C99),
+        Some(Keyword::Inline)
+    );
+    assert_eq!(Keyword::from_identifier_in("_Generic", Dialect::C99), None);
+    assert_eq!(
+        Keyword::from_identifier_in("_Generic", Dialect::C11),
+        Some(Keyword::Generic)
+    );
+    assert_eq!(Keyword::from_identifier_in("true", Dialect::C17), None);
+    assert_eq!(
+        Keyword::from_identifier_in("true", Dialect::C23),
+        Some(Keyword::True)
+    );
 }
 
 #[test]

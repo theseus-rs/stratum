@@ -7,7 +7,7 @@
 
 use crate::alloc_prelude::*;
 use stratum_arena::Interner;
-use stratum_c_lexer::{Keyword, PpToken, PpTokenKind, Token, TokenKind};
+use stratum_c_lexer::{Dialect, Keyword, PpToken, PpTokenKind, Token, TokenKind};
 use stratum_diagnostics::{Diagnostic, FileId, Label, Span};
 
 /// The outcome of finalising a preprocessing-token stream.
@@ -22,13 +22,25 @@ pub struct FinalizeResult {
 /// finalizes `tokens`, interning any decoded string contents into `interner`.
 #[must_use]
 pub fn finalize(tokens: &[PpToken], interner: &mut Interner) -> FinalizeResult {
+    finalize_with_dialect(tokens, interner, Dialect::DEFAULT)
+}
+
+/// finalizes `tokens` using the keyword set from `dialect`.
+#[must_use]
+pub fn finalize_with_dialect(
+    tokens: &[PpToken],
+    interner: &mut Interner,
+    dialect: Dialect,
+) -> FinalizeResult {
     let mut out = Vec::new();
     let mut diagnostics = Vec::new();
     let mut i = 0;
     while let Some(&token) = tokens.get(i) {
         match token.kind {
             PpTokenKind::Newline => {}
-            PpTokenKind::Identifier(sym) => out.push(finalize_identifier(sym, token, interner)),
+            PpTokenKind::Identifier(sym) => {
+                out.push(finalize_identifier(sym, token, interner, dialect));
+            }
             PpTokenKind::Number(sym) => {
                 out.push(finalize_number(sym, token, interner, &mut diagnostics));
             }
@@ -69,8 +81,13 @@ fn eof_span(tokens: &[PpToken]) -> Span {
         .map_or_else(|| Span::point(FileId::from_raw(0), 0), |t| t.span)
 }
 
-fn finalize_identifier(sym: stratum_arena::Symbol, token: PpToken, interner: &Interner) -> Token {
-    let kind = Keyword::from_identifier(interner.resolve(sym).unwrap_or(""))
+fn finalize_identifier(
+    sym: stratum_arena::Symbol,
+    token: PpToken,
+    interner: &Interner,
+    dialect: Dialect,
+) -> Token {
+    let kind = Keyword::from_identifier_in(interner.resolve(sym).unwrap_or(""), dialect)
         .map_or(TokenKind::Identifier(sym), TokenKind::Keyword);
     Token {
         kind,
@@ -240,10 +257,13 @@ fn decode_string(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_char, decode_string, finalize, finalize_strings, parse_integer};
+    use super::{
+        decode_char, decode_string, finalize, finalize_strings, finalize_with_dialect,
+        parse_integer,
+    };
     use crate::alloc_prelude::*;
     use stratum_arena::Interner;
-    use stratum_c_lexer::{PpToken, PpTokenKind, TokenKind, lex};
+    use stratum_c_lexer::{Dialect, PpToken, PpTokenKind, TokenKind, lex};
     use stratum_diagnostics::{FileId, Span};
 
     fn finalize_src(src: &str) -> (Vec<TokenKind>, Interner) {
@@ -272,6 +292,31 @@ mod tests {
         let (kinds, _) = finalize_src("int while");
         assert!(matches!(kind(&kinds, 0), Some(TokenKind::Keyword(_))));
         assert!(matches!(kind(&kinds, 1), Some(TokenKind::Keyword(_))));
+    }
+
+    #[test]
+    fn keyword_classification_respects_dialect() {
+        let mut interner = Interner::new();
+        let lexed = lex("inline _Generic true", FileId::from_raw(0), &mut interner).unwrap();
+        let c89 = finalize_with_dialect(&lexed.tokens, &mut interner, Dialect::C89);
+        assert!(matches!(
+            kind(&c89.tokens.iter().map(|t| t.kind).collect::<Vec<_>>(), 0),
+            Some(TokenKind::Identifier(_))
+        ));
+
+        let c23 = finalize_with_dialect(&lexed.tokens, &mut interner, Dialect::C23);
+        assert!(matches!(
+            c23.tokens.first().map(|t| t.kind),
+            Some(TokenKind::Keyword(_))
+        ));
+        assert!(matches!(
+            c23.tokens.get(1).map(|t| t.kind),
+            Some(TokenKind::Keyword(_))
+        ));
+        assert!(matches!(
+            c23.tokens.get(2).map(|t| t.kind),
+            Some(TokenKind::Keyword(_))
+        ));
     }
 
     #[test]

@@ -7,8 +7,9 @@
 #![allow(dead_code)]
 
 use stratum_arena::Interner;
+use stratum_c_lexer::Dialect;
 use stratum_c_lexer::lex;
-use stratum_c_parser::{finalize, parse};
+use stratum_c_parser::{finalize_with_dialect, parse_with_dialect};
 use stratum_diagnostics::SourceMap;
 
 /// The outcome of running the front of the pipeline over a source string.
@@ -24,6 +25,12 @@ pub struct Parsed {
 /// Runs lex → finalize → parse over `src`, collecting diagnostics from every phase.
 #[must_use]
 pub fn run(src: &str) -> Parsed {
+    run_with_dialect(src, Dialect::DEFAULT)
+}
+
+/// Runs lex → finalize → parse over `src` using a specific dialect.
+#[must_use]
+pub fn run_with_dialect(src: &str, dialect: Dialect) -> Parsed {
     let mut map = SourceMap::new();
     let file = map.add_root("test.c", src);
     let mut interner = Interner::new();
@@ -45,11 +52,11 @@ pub fn run(src: &str) -> Parsed {
     let mut diagnostics: Vec<String> = lexed.diagnostics.iter().map(render).collect();
     let mut has_errors = lexed.has_errors();
 
-    let finalized = finalize(&lexed.tokens, &mut interner);
+    let finalized = finalize_with_dialect(&lexed.tokens, &mut interner, dialect);
     diagnostics.extend(finalized.diagnostics.iter().map(render));
     has_errors |= finalized.diagnostics.iter().any(is_error);
 
-    let Ok(result) = parse(&finalized.tokens, interner) else {
+    let Ok(result) = parse_with_dialect(&finalized.tokens, interner, dialect) else {
         return Parsed {
             dump: String::new(),
             diagnostics,
@@ -93,12 +100,34 @@ pub fn assert_ok(src: &str) {
     );
 }
 
+/// Asserts that `src` parses cleanly for `dialect`, ignoring the exact dump.
+pub fn assert_ok_with_dialect(src: &str, dialect: Dialect) {
+    let parsed = run_with_dialect(src, dialect);
+    assert!(
+        !parsed.has_errors,
+        "expected {src:?} to parse cleanly as {}, got: {:#?}",
+        dialect.spelling(),
+        parsed.diagnostics
+    );
+}
+
 /// Asserts that `src` produces at least one error diagnostic.
 pub fn assert_errors(src: &str) {
     let parsed = run(src);
     assert!(
         parsed.has_errors,
         "expected {src:?} to produce errors, but it parsed cleanly: {}",
+        parsed.dump
+    );
+}
+
+/// Asserts that `src` produces at least one error diagnostic for `dialect`.
+pub fn assert_errors_with_dialect(src: &str, dialect: Dialect) {
+    let parsed = run_with_dialect(src, dialect);
+    assert!(
+        parsed.has_errors,
+        "expected {src:?} to produce errors as {}, but it parsed cleanly: {}",
+        dialect.spelling(),
         parsed.dump
     );
 }

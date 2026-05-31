@@ -474,6 +474,9 @@ impl HirContext {
                 if qualifiers.is_restrict {
                     prefix.push_str("restrict ");
                 }
+                if qualifiers.is_atomic {
+                    prefix.push_str("_Atomic ");
+                }
                 format!("{prefix}{}", self.type_to_string(*inner))
             }
             HirType::Tag { kind, name } => {
@@ -514,6 +517,9 @@ fn flags_prefix(flags: DeclFlags) -> String {
     }
     if flags.inline {
         prefix.push_str("inline ");
+    }
+    if flags.noreturn {
+        prefix.push_str("_Noreturn ");
     }
     prefix
 }
@@ -667,6 +673,7 @@ module
                     is_const: true,
                     is_volatile: true,
                     is_restrict: true,
+                    is_atomic: true,
                 },
             })
             .unwrap();
@@ -700,7 +707,7 @@ module
         assert_eq!(hir.type_to_string(plain_fn_ty), "fn() -> void");
         assert_eq!(
             hir.type_to_string(qualified_ty),
-            "const volatile restrict *i32"
+            "const volatile restrict _Atomic *i32"
         );
         assert_eq!(hir.type_to_string(tag_ty), "struct name");
         assert_eq!(hir.type_to_string(anon_tag_ty), "union <anonymous>");
@@ -725,6 +732,7 @@ module
                     flags: DeclFlags {
                         storage: Some(StorageClass::Static),
                         inline: true,
+                        noreturn: true,
                     },
                     init: Some(var_init.clone()),
                 },
@@ -977,6 +985,7 @@ module
                     flags: DeclFlags {
                         storage: Some(StorageClass::Extern),
                         inline: false,
+                        noreturn: false,
                     },
                     body: None,
                 },
@@ -993,6 +1002,7 @@ module
                     flags: DeclFlags {
                         storage: Some(StorageClass::Auto),
                         inline: false,
+                        noreturn: false,
                     },
                     body: None,
                 },
@@ -1039,7 +1049,7 @@ module
             .unwrap();
 
         let dump = hir.dump(module);
-        assert!(dump.contains("static inline var name"));
+        assert!(dump.contains("static inline _Noreturn var name"));
         assert!(dump.contains("extern function name"));
         assert!(dump.contains("auto function name(...)"));
         assert!(dump.contains("member ->field"));

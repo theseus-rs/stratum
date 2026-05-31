@@ -3,17 +3,18 @@
 use crate::alloc_prelude::*;
 use crate::parser::{PResult, Parser};
 use stratum_c_ast::{
-    DeclSpecifiers, Declarator, Derivation, Enumerator, FieldDecl, ParamDecl, StorageClass,
-    TypeName, TypeQualifier, TypeSpecifier,
+    AlignmentSpecifier, DeclSpecifiers, Declarator, Derivation, Enumerator, FieldDecl, ParamDecl,
+    StorageClass, TypeName, TypeQualifier, TypeSpecifier, TypeofOperand,
 };
-use stratum_c_lexer::{Keyword, Punctuator, TokenKind};
+use stratum_c_lexer::{Dialect, Keyword, Punctuator, TokenKind};
 
 impl Parser<'_> {
     /// Returns `true` if the current token begins a declaration.
     pub(crate) fn at_declaration_start(&self) -> bool {
         match self.peek_kind() {
-            TokenKind::Keyword(kw) => is_specifier_keyword(kw),
+            TokenKind::Keyword(kw) => is_specifier_keyword(kw) || is_static_assert_keyword(kw),
             TokenKind::Identifier(sym) => self.is_typedef_name(sym),
+            TokenKind::Punct(Punctuator::LBracket) if self.is_attribute_start() => true,
             _ => false,
         }
     }
@@ -23,6 +24,7 @@ impl Parser<'_> {
         let mut specs = DeclSpecifiers::default();
         let mut has_type = false;
         loop {
+            self.skip_attribute_specifiers()?;
             match self.peek_kind() {
                 TokenKind::Keyword(kw) if self.absorb_keyword(kw, &mut specs, &mut has_type)? => {}
                 TokenKind::Identifier(sym) if !has_type && self.is_typedef_name(sym) => {
@@ -44,16 +46,43 @@ impl Parser<'_> {
         has_type: &mut bool,
     ) -> PResult<bool> {
         if let Some(storage) = storage_class(kw) {
+            self.require(storage_class_dialect(kw), "storage-class specifier")?;
             self.bump();
             specs.storage.push(storage);
+        } else if kw == Keyword::Atomic && self.peek2_kind() == TokenKind::Punct(Punctuator::LParen)
+        {
+            self.require(Dialect::C11, "`_Atomic(type-name)`")?;
+            let spec = self.parse_atomic_type_specifier()?;
+            specs.type_specifiers.push(spec);
+            *has_type = true;
         } else if let Some(qual) = type_qualifier(kw) {
+            self.require(type_qualifier_dialect(kw), "type qualifier")?;
             self.bump();
             specs.qualifiers.push(qual);
         } else if kw == Keyword::Inline {
+            self.require(Dialect::C99, "`inline`")?;
             self.bump();
             specs.inline = true;
-        } else if let Some(spec) = simple_type_specifier(kw) {
+        } else if kw == Keyword::Noreturn {
+            self.require(Dialect::C11, "`_Noreturn`")?;
             self.bump();
+            specs.noreturn = true;
+        } else if is_alignas_keyword(kw) {
+            let spec = self.parse_alignment_specifier()?;
+            specs.alignments.push(spec);
+        } else if let Some(spec) = simple_type_specifier(kw) {
+            self.require(type_specifier_dialect(kw), "type specifier")?;
+            self.bump();
+            specs.type_specifiers.push(spec);
+            *has_type = true;
+        } else if kw == Keyword::BitInt {
+            self.require(Dialect::C23, "`_BitInt`")?;
+            let spec = self.parse_bit_int_specifier()?;
+            specs.type_specifiers.push(spec);
+            *has_type = true;
+        } else if matches!(kw, Keyword::Typeof | Keyword::TypeofUnqual) {
+            self.require(Dialect::C23, "`typeof`")?;
+            let spec = self.parse_typeof_specifier()?;
             specs.type_specifiers.push(spec);
             *has_type = true;
         } else if matches!(kw, Keyword::Struct | Keyword::Union) {
@@ -68,6 +97,59 @@ impl Parser<'_> {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    fn parse_alignment_specifier(&mut self) -> PResult<AlignmentSpecifier> {
+        self.require(Dialect::C11, "alignment specifier")?;
+        self.bump(); // `_Alignas` / `alignas`
+        self.expect_punct(Punctuator::LParen)?;
+        let spec = if self.lparen_next_starts_type_name() {
+            AlignmentSpecifier::Type(self.parse_type_name()?)
+        } else {
+            AlignmentSpecifier::Expr(self.parse_conditional()?)
+        };
+        self.expect_punct(Punctuator::RParen)?;
+        Ok(spec)
+    }
+
+    fn parse_atomic_type_specifier(&mut self) -> PResult<TypeSpecifier> {
+        self.bump(); // `_Atomic`
+        self.expect_punct(Punctuator::LParen)?;
+        let type_name = self.parse_type_name()?;
+        self.expect_punct(Punctuator::RParen)?;
+        Ok(TypeSpecifier::Atomic(Box::new(type_name)))
+    }
+
+    fn parse_bit_int_specifier(&mut self) -> PResult<TypeSpecifier> {
+        self.bump(); // `_BitInt`
+        self.expect_punct(Punctuator::LParen)?;
+        let width = self.parse_conditional()?;
+        self.expect_punct(Punctuator::RParen)?;
+        Ok(TypeSpecifier::BitInt(width))
+    }
+
+    fn parse_typeof_specifier(&mut self) -> PResult<TypeSpecifier> {
+        let unqualified = self.peek_kind() == TokenKind::Keyword(Keyword::TypeofUnqual);
+        self.bump(); // `typeof` / `typeof_unqual`
+        self.expect_punct(Punctuator::LParen)?;
+        let operand = if self.lparen_next_starts_type_name() {
+            TypeofOperand::Type(Box::new(self.parse_type_name()?))
+        } else {
+            TypeofOperand::Expr(self.parse_expr()?)
+        };
+        self.expect_punct(Punctuator::RParen)?;
+        Ok(TypeSpecifier::Typeof {
+            operand,
+            unqualified,
+        })
+    }
+
+    fn lparen_next_starts_type_name(&self) -> bool {
+        match self.peek_kind() {
+            TokenKind::Keyword(kw) => is_type_keyword(kw),
+            TokenKind::Identifier(sym) => self.is_typedef_name(sym),
+            _ => false,
+        }
     }
 
     fn parse_struct_or_union(&mut self, kw: Keyword) -> PResult<TypeSpecifier> {
@@ -89,6 +171,13 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::LBrace)?;
         let mut fields = Vec::new();
         while !self.is_punct(Punctuator::RBrace) && !self.at_eof() {
+            self.skip_attribute_specifiers()?;
+            if let TokenKind::Keyword(kw) = self.peek_kind()
+                && is_static_assert_keyword(kw)
+            {
+                let _ = self.parse_static_assert()?;
+                continue;
+            }
             let specifiers = self.parse_decl_specifiers()?;
             loop {
                 let declarator = self.parse_declarator(true)?;
@@ -139,6 +228,9 @@ impl Parser<'_> {
             if !self.eat_punct(Punctuator::Comma) {
                 break;
             }
+            if self.is_punct(Punctuator::RBrace) && !self.supports(Dialect::C99) {
+                return Err(self.error("trailing comma in enum requires c99 or later"));
+            }
         }
         self.expect_punct(Punctuator::RBrace)?;
         Ok(enumerators)
@@ -173,6 +265,7 @@ impl Parser<'_> {
     }
 
     fn parse_direct_declarator(&mut self, abstract_allowed: bool) -> PResult<Declarator> {
+        self.skip_attribute_specifiers()?;
         let mut declarator = Declarator::default();
         let mut inner = Vec::new();
 
@@ -188,6 +281,7 @@ impl Parser<'_> {
             return Err(self.error("expected a declarator"));
         }
 
+        self.skip_attribute_specifiers()?;
         let suffixes = self.parse_declarator_suffixes()?;
         let mut derivations = inner;
         derivations.extend(suffixes);
@@ -208,6 +302,7 @@ impl Parser<'_> {
     fn parse_declarator_suffixes(&mut self) -> PResult<Vec<Derivation>> {
         let mut derivations = Vec::new();
         loop {
+            self.skip_attribute_specifiers()?;
             if self.is_punct(Punctuator::LBracket) {
                 derivations.push(self.parse_array_suffix()?);
             } else if self.is_punct(Punctuator::LParen) {
@@ -295,8 +390,18 @@ fn storage_class(kw: Keyword) -> Option<StorageClass> {
         Keyword::Static => StorageClass::Static,
         Keyword::Auto => StorageClass::Auto,
         Keyword::Register => StorageClass::Register,
+        Keyword::ThreadLocal | Keyword::C23ThreadLocal => StorageClass::ThreadLocal,
+        Keyword::Constexpr => StorageClass::Constexpr,
         _ => return None,
     })
+}
+
+fn storage_class_dialect(kw: Keyword) -> Dialect {
+    match kw {
+        Keyword::ThreadLocal => Dialect::C11,
+        Keyword::C23ThreadLocal | Keyword::Constexpr => Dialect::C23,
+        _ => Dialect::C89,
+    }
 }
 
 fn type_qualifier(kw: Keyword) -> Option<TypeQualifier> {
@@ -304,8 +409,17 @@ fn type_qualifier(kw: Keyword) -> Option<TypeQualifier> {
         Keyword::Const => TypeQualifier::Const,
         Keyword::Volatile => TypeQualifier::Volatile,
         Keyword::Restrict => TypeQualifier::Restrict,
+        Keyword::Atomic => TypeQualifier::Atomic,
         _ => return None,
     })
+}
+
+fn type_qualifier_dialect(kw: Keyword) -> Dialect {
+    match kw {
+        Keyword::Restrict => Dialect::C99,
+        Keyword::Atomic => Dialect::C11,
+        _ => Dialect::C89,
+    }
 }
 
 fn simple_type_specifier(kw: Keyword) -> Option<TypeSpecifier> {
@@ -319,10 +433,54 @@ fn simple_type_specifier(kw: Keyword) -> Option<TypeSpecifier> {
         Keyword::Double => TypeSpecifier::Double,
         Keyword::Signed => TypeSpecifier::Signed,
         Keyword::Unsigned => TypeSpecifier::Unsigned,
-        Keyword::Bool => TypeSpecifier::Bool,
+        Keyword::Bool | Keyword::C23Bool => TypeSpecifier::Bool,
         Keyword::Complex => TypeSpecifier::Complex,
+        Keyword::Imaginary => TypeSpecifier::Imaginary,
+        Keyword::Decimal32 => TypeSpecifier::Decimal32,
+        Keyword::Decimal64 => TypeSpecifier::Decimal64,
+        Keyword::Decimal128 => TypeSpecifier::Decimal128,
         _ => return None,
     })
+}
+
+fn type_specifier_dialect(kw: Keyword) -> Dialect {
+    match kw {
+        Keyword::Bool | Keyword::Complex | Keyword::Imaginary => Dialect::C99,
+        Keyword::C23Bool | Keyword::Decimal32 | Keyword::Decimal64 | Keyword::Decimal128 => {
+            Dialect::C23
+        }
+        _ => Dialect::C89,
+    }
+}
+
+fn is_alignas_keyword(kw: Keyword) -> bool {
+    matches!(kw, Keyword::Alignas | Keyword::C23Alignas)
+}
+
+pub(crate) fn is_static_assert_keyword(kw: Keyword) -> bool {
+    matches!(kw, Keyword::StaticAssert | Keyword::C23StaticAssert)
+}
+
+pub(crate) fn is_alignof_keyword(kw: Keyword) -> bool {
+    matches!(kw, Keyword::Alignof | Keyword::C23Alignof)
+}
+
+/// Returns `true` if `kw` can begin a type name.
+pub(crate) fn is_type_keyword(kw: Keyword) -> bool {
+    simple_type_specifier(kw).is_some()
+        || matches!(
+            kw,
+            Keyword::Struct
+                | Keyword::Union
+                | Keyword::Enum
+                | Keyword::Const
+                | Keyword::Volatile
+                | Keyword::Restrict
+                | Keyword::Atomic
+                | Keyword::BitInt
+                | Keyword::Typeof
+                | Keyword::TypeofUnqual
+        )
 }
 
 /// Returns `true` if `kw` can begin a declaration specifier.
@@ -332,7 +490,16 @@ fn is_specifier_keyword(kw: Keyword) -> bool {
         || simple_type_specifier(kw).is_some()
         || matches!(
             kw,
-            Keyword::Struct | Keyword::Union | Keyword::Enum | Keyword::Inline
+            Keyword::Struct
+                | Keyword::Union
+                | Keyword::Enum
+                | Keyword::Inline
+                | Keyword::Noreturn
+                | Keyword::Alignas
+                | Keyword::C23Alignas
+                | Keyword::BitInt
+                | Keyword::Typeof
+                | Keyword::TypeofUnqual
         )
 }
 
@@ -343,7 +510,7 @@ mod tests {
     use crate::parser::Parser;
     use stratum_arena::Interner;
     use stratum_c_ast::{CAst, DeclSpecifiers, Derivation, TypeSpecifier};
-    use stratum_c_lexer::{Keyword, Punctuator, Token, TokenKind};
+    use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
     use stratum_diagnostics::{FileId, Span};
     use stratum_utils::HashSet;
 
@@ -358,6 +525,7 @@ mod tests {
             ast: CAst::with_interner(interner),
             diagnostics: Vec::new(),
             typedefs: vec![HashSet::default()],
+            dialect: Dialect::DEFAULT,
         }
     }
 

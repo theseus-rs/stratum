@@ -148,6 +148,10 @@ pub enum StorageClass {
     Auto,
     /// `register`
     Register,
+    /// `_Thread_local` / `thread_local`
+    ThreadLocal,
+    /// `constexpr`
+    Constexpr,
 }
 
 impl StorageClass {
@@ -159,6 +163,8 @@ impl StorageClass {
             StorageClass::Static => "static",
             StorageClass::Auto => "auto",
             StorageClass::Register => "register",
+            StorageClass::ThreadLocal => "_Thread_local",
+            StorageClass::Constexpr => "constexpr",
         }
     }
 }
@@ -170,13 +176,15 @@ pub struct DeclFlags {
     pub storage: Option<StorageClass>,
     /// Whether the `inline` function specifier was present.
     pub inline: bool,
+    /// Whether the C11 `_Noreturn` function specifier was present.
+    pub noreturn: bool,
 }
 
 impl DeclFlags {
     /// Returns `true` if no flags are set.
     #[must_use]
     pub const fn is_empty(self) -> bool {
-        self.storage.is_none() && !self.inline
+        self.storage.is_none() && !self.inline && !self.noreturn
     }
 }
 
@@ -545,6 +553,8 @@ mod tests {
         assert_eq!(StorageClass::Static.spelling(), "static");
         assert_eq!(StorageClass::Auto.spelling(), "auto");
         assert_eq!(StorageClass::Register.spelling(), "register");
+        assert_eq!(StorageClass::ThreadLocal.spelling(), "_Thread_local");
+        assert_eq!(StorageClass::Constexpr.spelling(), "constexpr");
         assert_eq!(RecordKind::Struct.spelling(), "struct");
         assert_eq!(RecordKind::Union.spelling(), "union");
         assert!(DeclFlags::default().is_empty());
@@ -552,6 +562,7 @@ mod tests {
             !DeclFlags {
                 storage: Some(StorageClass::Static),
                 inline: false,
+                noreturn: false,
             }
             .is_empty()
         );
