@@ -127,6 +127,7 @@ jobs:
             cross: true
             os: ubuntu-latest
             target: i686-pc-windows-gnu
+            rustflags: -C link-arg=/opt/wine-stable/lib/wine/i386-windows/libws2_32.a
           - platform: i686-linux-gnu
             cross: true
             os: ubuntu-latest
@@ -245,6 +246,7 @@ jobs:
             cross: true
             os: ubuntu-latest
             target: sparcv9-sun-solaris
+            skip_link: true
             run_tests: false
           - platform: thumbv6m-none-eabi
             cross: true
@@ -292,6 +294,7 @@ jobs:
             cross: true
             os: ubuntu-latest
             target: x86_64-pc-solaris
+            skip_link: true
             run_tests: false
           - platform: x86_64-freebsd
             cross: true
@@ -358,6 +361,7 @@ jobs:
         if: ${{ matrix.cross && !matrix.build_std && !matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           cross clippy --workspace --target ${{ matrix.target }} -- -D warnings
 
@@ -365,6 +369,7 @@ jobs:
         if: ${{ matrix.cross && matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           cross clippy --workspace --no-default-features --target ${{ matrix.target }} -- -D warnings
 
@@ -372,6 +377,7 @@ jobs:
         if: ${{ matrix.cross && matrix.build_std }}
         env:
           CARGO_TERM_COLOR: always
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           cross +nightly clippy -Z build-std --workspace --target ${{ matrix.target }} -- -D warnings
 
@@ -418,6 +424,7 @@ jobs:
           CARGO_TERM_COLOR: always
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
           RUST_LOG: info
         run: |
           cross test --profile release-tests --workspace --all-features --target ${{ matrix.target }}
@@ -428,36 +435,62 @@ jobs:
           CARGO_TERM_COLOR: always
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
           RUST_LOG: info
         run: |
           cross +nightly test -Z build-std --profile release-tests --workspace --all-features --target ${{ matrix.target }}
 
-      - name: Build
-        if: ${{ matrix.cross && matrix.run_tests == false && !matrix.build_std && !matrix.no_default_features }}
+      - name: Check
+        if: ${{ matrix.cross && matrix.skip_link == true && !matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          RUST_LOG: info
+        run: |
+          cross check --workspace --all-features --target ${{ matrix.target }}
+
+      - name: Check
+        if: ${{ matrix.cross && matrix.skip_link == true && matrix.no_default_features }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          RUST_LOG: info
+        run: |
+          cross check --workspace --no-default-features --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ matrix.cross && matrix.run_tests == false && matrix.skip_link != true && !matrix.build_std && !matrix.no_default_features }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
           RUST_LOG: info
         run: |
           cross build --workspace --all-features --target ${{ matrix.target }}
 
       - name: Build
-        if: ${{ matrix.cross && matrix.run_tests == false && matrix.no_default_features }}
+        if: ${{ matrix.cross && matrix.run_tests == false && matrix.skip_link != true && matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
           RUST_LOG: info
         run: |
           cross build --workspace --no-default-features --target ${{ matrix.target }}
 
       - name: Build
-        if: ${{ matrix.cross && matrix.run_tests == false && matrix.build_std }}
+        if: ${{ matrix.cross && matrix.run_tests == false && matrix.skip_link != true && matrix.build_std }}
         env:
           CARGO_TERM_COLOR: always
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
+          RUSTFLAGS: ${{ matrix.rustflags }}
           RUST_LOG: info
         run: |
           cross +nightly build -Z build-std --workspace --all-features --target ${{ matrix.target }}
