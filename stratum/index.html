@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en" id="oranda" class="dark">
+  <head>
+    <title>My Oranda Project</title>
+    
+    
+      <link rel="icon" href="/stratum/stratum/favicon.ico" />
+    
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="My Oranda Project" />
+    
+    
+    
+    <meta http-equiv="Permissions-Policy" content="interest-cohort=()" />
+    <link rel="stylesheet" href="/stratum/stratum/oranda-v0.6.1.css" />
+    
+    
+  </head>
+  <body>
+    <div class="container">
+      <div class="page-body">
+        
+
+        <main>
+          <header>
+            
+            <h1 class="title">My Oranda Project</h1>
+            
+  <nav class="nav">
+    <ul>
+      <li><a href="/stratum/stratum/">Home</a></li>
+
+      
+
+      
+
+      
+
+      
+        <li><a href="/stratum/stratum/funding/">Funding</a></li>
+      
+
+      
+    </ul>
+  </nav>
+
+          </header>
+
+          
+
+
+    <h1>stratum</h1>
+<p>Experimental, multi-language compiler tools built around a unified intermediate
+representation. Stratum is designed so that several source languages can converge on a
+single, language-neutral <strong>High-level Intermediate Representation (HIR)</strong>, after which the
+middle- and back-ends never need to know which language the code came from.</p>
+<h2>Pipeline</h2>
+<p>The long-term target is the full lowering chain:</p>
+<pre style="background-color:#263238;"><span style="color:#eeffff;">Source ↔ HIR ↔ MIR (SSA + CFG) ↔ LIR (roles + layout) ↔ ASM ↔ Binary
+</span></pre>
+
+<p>This repository currently implements the <strong>frontend convergence point</strong>: shared
+infrastructure, the shared HIR, and a dialect-aware <strong>C frontend</strong> that lowers into HIR. The
+frontend accepts C89/C90, C99, C11, C17/C18, and C23 modes; the C89/C99 surface has the most
+complete structure-preserving HIR coverage, while selected C11/C23 constructs are parsed and
+carried through the current representation. The MIR / LIR / ASM / Binary stages are
+intentionally deferred.</p>
+<pre style="background-color:#263238;"><span style="color:#eeffff;">   C source
+</span><span style="color:#eeffff;">      |
+</span><span style="color:#eeffff;">      v
+</span><span style="color:#eeffff;">+-------------+   pp-tokens   +------------------+   pp-tokens
+</span><span style="color:#eeffff;">|  c-lexer    | ------------&gt; |  c-preprocessor  | ------------+
+</span><span style="color:#eeffff;">+-------------+               +------------------+             |
+</span><span style="color:#eeffff;">                                                               v
+</span><span style="color:#eeffff;">                                                     +------------------+  tokens
+</span><span style="color:#eeffff;">                                                     | finalize (parser)|
+</span><span style="color:#eeffff;">                                                     +------------------+
+</span><span style="color:#eeffff;">                                                               |
+</span><span style="color:#eeffff;">                                                               v
+</span><span style="color:#eeffff;">                                +----------+   C AST   +------------------+
+</span><span style="color:#eeffff;">                                |  c-ast   | &lt;-------- |     c-parser     |
+</span><span style="color:#eeffff;">                                +----+-----+           +------------------+
+</span><span style="color:#eeffff;">                                     |
+</span><span style="color:#eeffff;">                         +-----------+-----------+
+</span><span style="color:#eeffff;">                         |                       |
+</span><span style="color:#eeffff;">                         v                       v
+</span><span style="color:#eeffff;">                   +-------------+          +----------+
+</span><span style="color:#eeffff;">                   | c-sema      |          | c-bridge |
+</span><span style="color:#eeffff;">                   | diagnostics |          +----+-----+
+</span><span style="color:#eeffff;">                   +-------------+               |  HirBridge
+</span><span style="color:#eeffff;">                                                 v
+</span><span style="color:#eeffff;">                                          +-------------+
+</span><span style="color:#eeffff;">                                          |     hir     |  (language-neutral)
+</span><span style="color:#eeffff;">                                          +-------------+
+</span></pre>
+
+<h2>License</h2>
+<p>Licensed under either of <a href="LICENSE-APACHE" rel="noopener noreferrer">Apache License, Version 2.0</a> or
+<a href="LICENSE-MIT" rel="noopener noreferrer">MIT license</a> at your option.</p>
+
+
+
+        </main>
+      </div>
+
+      <footer>
+        
+        <span>
+          My Oranda Project
+        </span>
+      </footer>
+    </div>
+
+    
+    
+
+    
+
+
+  </body>
+</html>
