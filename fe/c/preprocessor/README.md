@@ -9,22 +9,20 @@ the C grammar: its output is an expanded preprocessing-token stream that the par
 
 ## Coverage
 
-- **Macros** — object- and function-like, including `#` (stringize), `##` (paste), rescanning,
+- **Macros**: object- and function-like, including `#` (stringize), `##` (paste), rescanning,
   and blue painting via per-token hide sets; variadic macros (`...` / `__VA_ARGS__`); `#undef`.
-- **Conditionals** — the full `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif` family with a
+- **Conditionals**: the full `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif` family with a
   constant-expression evaluator (arithmetic, bitwise, shifts, comparisons, logical operators,
   the ternary operator, `defined`, and character constants).
-- **Inclusion** — `#include` with quoted, angled, and computed (macro-expanded) header names,
+- **Inclusion**: `#include` with quoted, angled, and computed (macro-expanded) header names,
   recorded in the source map for provenance.
-- **Other directives** — `#error` (diagnostic), and `#line` / `#pragma` (accepted and ignored).
+- **Other directives**: `#error` (diagnostic), and `#line` / `#pragma` (accepted and ignored).
 
 ## What it provides
 
-- **`preprocess`** — the entry point, returning a `PreprocessResult { tokens, diagnostics }`.
+- **`preprocess`**: the entry point, returning a `PreprocessResult { tokens, diagnostics }`.
 - **`IncludeResolver`** with `MapIncludeResolver` (in-memory) and `FsIncludeResolver`
   (filesystem) implementations, plus `ResolvedInclude`.
-
-Depends on `stratum-arena`, `stratum-diagnostics`, and `stratum-c-lexer`.
 
 ## Example
 
@@ -44,8 +42,8 @@ assert!(!result.has_errors());
 
 ## Testing
 
-Integration tests under `tests/` are grouped by concern — `object_macros`, `function_macros`,
-`conditionals`, `includes`, and `directives` — and assert on the rendered, expanded token
+Integration tests under `tests/` are grouped by concern `object_macros`, `function_macros`,
+`conditionals`, `includes`, and `directives`; asserts on the rendered, expanded token
 stream.
 
 ## License

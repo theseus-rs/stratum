@@ -10,10 +10,10 @@ threads without lifetime gymnastics.
 
 ## What it provides
 
-- **`Id<T>`** — a 32-bit, strongly-typed index into an `Arena<T>`. Distinct `T`s cannot be
+- **`Id<T>`**: a 32-bit, strongly-typed index into an `Arena<T>`. Distinct `T`s cannot be
   confused at compile time.
-- **`Arena<T>`** — a flat `Vec`-backed store that hands out `Id<T>`s.
-- **`Symbol` / `Interner`** — string interning, so repeated identifiers become a single
+- **`Arena<T>`**: a flat `Vec`-backed store that hands out `Id<T>`s.
+- **`Symbol` / `Interner`**: string interning, so repeated identifiers become a single
   cheap, copyable `Symbol`.
 
 This crate is intentionally **dependency-free** and knows nothing about any particular

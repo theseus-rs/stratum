@@ -4,23 +4,20 @@ Token finalisation plus a recursive-descent C89/C99 parser for Stratum.
 
 This crate performs the last two steps before a C AST exists:
 
-1. **Token finalisation** (translation phases 5–6) — converts preprocessing tokens into final
+1. **Token finalisation** (translation phases 5–6):  converts preprocessing tokens into final
    tokens (keywords distinguished from identifiers, numeric and character constants decoded)
    and concatenates adjacent string literals.
-2. **Parsing** — a recursive-descent parser over the finalized token stream that produces a
+2. **Parsing**: a recursive-descent parser over the finalized token stream that produces a
    `CAst` translation unit, resolving typedef names through a scoped symbol table (the "lexer
    hack" handled here, not in the lexer).
 
 Type and symbol *resolution* beyond the typedef table is deliberately left to later stages:
 the parser emits unresolved names.
 
-It depends on `stratum-arena`, `stratum-diagnostics`, `stratum-c-ast`, and `stratum-c-lexer` —
-**not** on the preprocessor. The driver orchestrates lex → preprocess → finalize → parse.
-
 ## What it provides
 
-- **`finalize`** — pp-tokens → final tokens (returns a `FinalizeResult`).
-- **`parse`** — final tokens → `CAst` (returns a `Result<ParseResult>` with diagnostics).
+- **`finalize`**: pp-tokens → final tokens (returns a `FinalizeResult`).
+- **`parse`**: final tokens → `CAst` (returns a `Result<ParseResult>` with diagnostics).
 
 ## Example
 

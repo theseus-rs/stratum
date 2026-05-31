@@ -119,8 +119,8 @@ module
 This is an **initial project structure**, delivered with full unit and integration tests and
 documentation. The C frontend provides **complete structural coverage of C89/C99**: the lexer,
 preprocessor, parser, and lowering together accept every standard declaration, statement,
-expression, type, and initializer form — including C99 designated initializers and compound
-literals — and the **HIR represents each one faithfully** (control flow keeps its
+expression, type, and initializer form; including C99 designated initializers and compound
+literals;  the **HIR represents each one faithfully** (control flow keeps its
 `while`/`do`/`for`/`switch` shapes; `goto`/labels, casts, `sizeof`, member access, subscripting,
 the conditional and comma operators, compound assignment, pre/post increment, and
 `typedef`/aggregate/enum declarations all survive). Lowering is **total**: it never drops a

@@ -7,7 +7,7 @@
     "members": [
       {
         "slug": "stratum",
-        "path": "./stratum"
+        "path": "."
       }
     ]
   }

@@ -11,7 +11,7 @@ LIR, ASM, …) never need to know which language the code came from.
 Compared with a raw syntax tree the HIR drops concrete syntax and keywords, yet it keeps a
 **faithful, structured representation of every C89/C99 construct**:
 
-- control flow keeps its original shapes — `While`, `DoWhile`, `For`, `Conditional`,
+- control flow keeps its original shapes `While`, `DoWhile`, `For`, `Conditional`,
   `Switch`/`Case`/`Default`, `Label`/`Goto`, `Break`/`Continue`/`Return`;
 - expressions retain casts, `sizeof`, member access (`.`/`->`), subscripting, the conditional
   and comma operators, compound assignment, and pre/post increment;
@@ -19,15 +19,15 @@ Compared with a raw syntax tree the HIR drops concrete syntax and keywords, yet 
   bit-fields, and (C99) designated initializers and compound literals.
 
 It stays **high-level**: named bindings, lexical blocks, and high-level types survive, and
-symbol/type *resolution* is deliberately deferred — names appear as `HirNode::Name` and source
+symbol/type *resolution* is deliberately deferred; names appear as `HirNode::Name` and source
 type names as `HirType::Named`.
 
 ## What it provides
 
-- **`HirContext`** — arenas for `HirNode`s and `HirType`s plus a parallel span array and a
+- **`HirContext`**: arenas for `HirNode`s and `HirType`s plus a parallel span array and a
   string interner.
-- **`HirNode` / `HirType`** — the node and type vocabularies.
-- **`HirBridge`** — the bidirectional trait each language frontend implements: `lower`
+- **`HirNode` / `HirType`**: the node and type vocabularies.
+- **`HirBridge`**: the bidirectional trait each language frontend implements: `lower`
   converges its private AST here, and `raise` reconstructs equivalent source text from HIR.
 - A deterministic textual **dumper** (`dump_root`) used as the snapshot format in tests.
 

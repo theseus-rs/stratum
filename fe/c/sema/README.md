@@ -11,8 +11,6 @@ It is deliberately **minimal** but occupies a real API slot: full type checking,
 promotions, linkage, and tentative-definition handling are future work that will grow behind
 this same interface, keeping the lowering stage decoupled from those details.
 
-Depends only on `stratum-arena`, `stratum-diagnostics`, and `stratum-c-ast`.
-
 ## License
 
 Licensed under either of Apache-2.0 or MIT at your option.

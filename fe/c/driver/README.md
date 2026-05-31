@@ -25,10 +25,10 @@ cargo run -p stratum-c-driver -- -I include -I /usr/include path/to/file.c
 
 The `--emit` flag selects which stage to print:
 
-- `pptokens` — the preprocessing-token stream after macro expansion and `#include`;
-- `tokens` — the finalized token stream;
-- `ast` — the C AST as an S-expression;
-- `hir` — the lowered HIR (the default).
+- `pptokens`: the preprocessing-token stream after macro expansion and `#include`;
+- `tokens`: the finalized token stream;
+- `ast`: the C AST as an S-expression;
+- `hir`: the lowered HIR (the default).
 
 ## Library API
 

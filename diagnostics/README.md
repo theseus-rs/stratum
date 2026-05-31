@@ -8,12 +8,12 @@ produced an error.
 
 ## What it provides
 
-- **`FileId` / `Span`** — a compact `(file, byte-range)` location used identically by every
+- **`FileId` / `Span`**: a compact `(file, byte-range)` location used identically by every
   frontend.
-- **`SourceMap`** — provenance-aware from the outset: alongside ordinary physical files it
+- **`SourceMap`**: provenance-aware from the outset: alongside ordinary physical files it
   records `#include` stacks and macro-expansion origins, and resolves byte offsets to
   line/column positions.
-- **`Diagnostic` / `Severity` / `Label`** — structured compiler messages.
+- **`Diagnostic` / `Severity` / `Label`**: structured compiler messages.
 - A plain-text, compiler-style **renderer**.
 
 The provenance model means the C preprocessor can attribute generated tokens back to both
