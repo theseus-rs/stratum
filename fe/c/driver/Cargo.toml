@@ -10,6 +10,12 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[package.metadata.wix]
+upgrade-guid = "BA1FE24B-6FA9-4220-8C0D-38497764DFF5"
+path-guid = "164554F8-C8F4-4C33-AE39-E732CD1572F7"
+license = false
+eula = false
+
 [features]
 default = ["std"]
 std = ["stratum_c_preprocessor/std"]
