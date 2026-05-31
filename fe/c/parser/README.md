@@ -1,12 +1,12 @@
 # stratum-c-parser
 
-Token finalisation plus a recursive-descent C89/C99 parser for Stratum.
+Token finalisation plus a recursive-descent, dialect-gated C parser for Stratum.
 
 This crate performs the last two steps before a C AST exists:
 
-1. **Token finalisation** (translation phases 5–6):  converts preprocessing tokens into final
-   tokens (keywords distinguished from identifiers, numeric and character constants decoded)
-   and concatenates adjacent string literals.
+1. **Token finalisation**: converts preprocessing tokens into final tokens (keywords
+   distinguished from identifiers according to the selected dialect, numeric and character
+   constants decoded) and concatenates adjacent string literals.
 2. **Parsing**: a recursive-descent parser over the finalized token stream that produces a
    `CAst` translation unit, resolving typedef names through a scoped symbol table (the "lexer
    hack" handled here, not in the lexer).
@@ -14,10 +14,16 @@ This crate performs the last two steps before a C AST exists:
 Type and symbol *resolution* beyond the typedef table is deliberately left to later stages:
 the parser emits unresolved names.
 
+The parser supports dialect gates for C89/C90, C99, C11, C17/C18, and C23. C23 support is
+syntactic at this stage; later semantic passes decide how much of each construct is fully
+modeled.
+
 ## What it provides
 
-- **`finalize`**: pp-tokens → final tokens (returns a `FinalizeResult`).
-- **`parse`**: final tokens → `CAst` (returns a `Result<ParseResult>` with diagnostics).
+- **`finalize` / `finalize_with_dialect`**: pp-tokens → final tokens (returns a
+  `FinalizeResult`).
+- **`parse` / `parse_with_dialect`**: final tokens → `CAst` (returns a
+  `Result<ParseResult>` with diagnostics).
 
 ## Example
 
@@ -37,12 +43,10 @@ let parsed = parse(&finalized.tokens, interner).unwrap();
 assert!(!parsed.has_errors());
 ```
 
-## Testing and benchmarks
+## Testing
 
 - Integration tests under `tests/` are grouped by concern (`declarations`, `expressions`,
-  `statements`, `initializers`, `types`, `diagnostics`).
-- `cargo bench -p stratum-c-parser` runs the Criterion `parsing` benchmark, measuring the
-  `lex`, `finalize`, `parse`, and full-`pipeline` stages independently.
+  `statements`, `initializers`, `types`, `diagnostics`, and `dialects`).
 
 ## License
 

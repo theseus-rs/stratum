@@ -2,7 +2,8 @@
 //!
 //! Control flow keeps its original shapes — `while`, `do`/`while`, and `for` each lower to
 //! the matching HIR loop, and `switch`/`case`/`default`, labels, and `goto` are preserved —
-//! so the lowering is total and structure-preserving rather than normalising.
+//! so the lowering is structure-preserving rather than normalising for the currently modeled
+//! statement surface.
 
 use crate::alloc_prelude::*;
 use crate::lower::CLowering;

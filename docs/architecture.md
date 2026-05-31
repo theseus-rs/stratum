@@ -36,11 +36,13 @@ only HIR exists.
   statements, and the full C expressions. No other frontend may depend on it, and it never
   leaks past lowering. A different language would define a completely different AST.
 - **Shared HIR (public).** `stratum-hir` is the entry point to the core pipeline. It is
-  **faithful**: every C89/C99 construct retains a dedicated, structured representation
-  (loops keep their `while`/`do`/`for` forms, `switch`/`case`, `goto`/labels, casts, `sizeof`,
-  member access, the conditional and comma operators, and so on). It stays **high-level** — it
-  keeps named bindings, lexical blocks, and high-level types, and it deliberately leaves
-  symbol/type *resolution* to a later stage (names appear as `HirNode::Name`).
+  **faithful for the currently modeled high-level shapes**: the C89/C99 core keeps dedicated
+  representations for loops, `switch`/`case`, `goto`/labels, casts, `sizeof`, member access,
+  the conditional and comma operators, declarations, aggregate initializers, and related
+  constructs. Dialect-gated C11/C23 syntax is accepted by the frontend, but not every newer
+  construct has a dedicated HIR node yet. HIR stays **high-level** — it keeps named bindings,
+  lexical blocks, and high-level types, and it deliberately leaves symbol/type *resolution* to
+  a later stage (names appear as `HirNode::Name`).
 
 This separation means the MIR/LIR/ASM/Binary back-ends can be written once, against the HIR,
 and remain agnostic about whether code came from an imperative, functional, or
@@ -88,22 +90,24 @@ resulting token to a meaningful source location.
 
 Parsers emit **unresolved** names. The C parser does not resolve variable bindings or types;
 it only performs the minimal lookahead C grammar genuinely requires, the *typedef
-"lexer hack"*, via a scoped name table it maintains itself. Actual symbol collection lives in
-`stratum-c-sema`, and full type resolution is future work that slots in between sema and the
-HIR→MIR transition. The HIR continues to carry unresolved `Name` nodes until then.
+"lexer hack"*, via a scoped name table it maintains itself. Basic symbol collection lives in
+`stratum-c-sema`: it records ordinary identifiers, typedefs, functions, variables, parameters,
+and enum constants, and reports simple incompatible redeclarations. Full type resolution,
+linkage, promotions, and target-aware layout are future work that slot in before the HIR→MIR
+transition. The HIR continues to carry unresolved `Name` nodes until then.
 
-## The C translation-phase → crate mapping
+## The C frontend pipeline → crate mapping
 
-The crate split follows C's standard translation phases so the lexer/preprocessor/parser
-boundary is correct:
+The crate split follows the important C translation boundaries so the
+lexer/preprocessor/parser separation stays correct:
 
-| Phase | Work                                                                           | Crate                                 |
+| Stage | Work                                                                           | Crate                                 |
 |-------|--------------------------------------------------------------------------------|---------------------------------------|
 | 1     | Line splicing, comments → space, **pp-tokenization**                           | `stratum-c-lexer`                     |
 | 2     | Directive execution, macro expansion (`#`/`##`, rescan, hide sets), `#include` | `stratum-c-preprocessor`              |
 | 3     | pp-token → final token, **adjacent string-literal concatenation**              | finalize module in `stratum-c-parser` |
-| 4     | Parsing → C AST (typedef table)                                                | `stratum-c-parser`                    |
-| 5     | Symbol/type resolution (skeletal)                                              | `stratum-c-sema`                      |
+| 4     | Dialect-gated parsing → C AST (typedef table)                                  | `stratum-c-parser`                    |
+| 5     | Symbol/type resolution                                                         | `stratum-c-sema`                      |
 | 6     | Lower resolved AST → HIR (and raise HIR → C source)                            | `stratum-c-bridge`                    |
 
 The lexer emits **preprocessing tokens**, not final tokens. Adjacent string concatenation and
@@ -128,7 +132,7 @@ The forward direction (`lower`) is the convergence step; the reverse direction (
 reconstructs equivalent source from HIR, which is what makes the representation *loss-checked*.
 The C frontend fulfils the contract with a zero-sized `CBridge` marker whose `lower` delegates
 to a `CLowering` driver that walks the C AST and writes HIR nodes into a `HirContext`. Lowering
-is **total and structure-preserving**, it never drops a construct:
+is structure-preserving for the C89/C99 core:
 
 - `while`, `do`/`while`, and `for` each lower to the matching HIR loop (`While`, `DoWhile`,
   `For`), with the `for` clauses preserved positionally; no break-guard rewriting occurs.
@@ -140,19 +144,25 @@ is **total and structure-preserving**, it never drops a construct:
 - C99 designated initializers and compound literals are preserved as structured initializer
   trees.
 
+Selected later C constructs currently reuse existing HIR forms instead of introducing
+dedicated nodes: boolean constants and `nullptr` lower to integer literals, `_Alignof` /
+`alignof` lower through `SizeofExpr` / `SizeofType`, and `_Generic` lowers to the selected
+expression used by the current bridge implementation.
+
 Because the C AST and the `HirContext` own **separate** interners, every identifier is
 re-interned through a single helper as it crosses the boundary; C `Symbol`s are never reused
 directly in HIR.
 
 ### Faithful, loss-checked lowering
 
-Because the HIR has a dedicated representation for every C89/C99 construct, lowering never
-emits an "unsupported construct" diagnostic. The faithfulness is verified by `source ↔ HIR`
-**round-trip tests** (in `stratum-c-bridge`): a fixture is lowered to HIR, raised back to C,
-and lowered again, and the two HIR dumps must be identical. A few constructs are represented
-*structurally* but not yet fully modeled semantically (e.g. variable-length arrays, `_Complex`,
-K&R parameter lists); completing their semantics, along with full symbol/type resolution, is
-progressive-completion work behind the stable APIs.
+Because the HIR has dedicated representation for the C89/C99 core, lowering avoids
+"unsupported construct" diagnostics for that surface. The faithfulness is verified by
+`source ↔ HIR` **round-trip tests** (in `stratum-c-bridge`): a fixture is lowered to HIR,
+raised back to C, and lowered again, and the two HIR dumps must be identical. Newer dialect
+syntax and deeper language rules remain progressive-completion work: variable-length arrays,
+`_Complex`, `_Imaginary`, `_BitInt`, `typeof`, `_Generic` type selection, K&R parameter lists,
+full symbol/type resolution, promotions, linkage, and target layout are not complete semantic
+models yet.
 
 ## Dependency graph
 
@@ -161,15 +171,16 @@ language-frontend halves know nothing about each other, and the parser does not 
 preprocessor, the driver orchestrates them):
 
 ```
-arena
+utils             -> hashbrown, rustc-hash
+arena             -> utils
 diagnostics       (no deps)
 hir               -> arena, diagnostics
 c-lexer           -> arena, diagnostics
-c-preprocessor    -> arena, diagnostics, c-lexer
+c-preprocessor    -> arena, diagnostics, c-lexer, utils
 c-ast             -> arena, diagnostics
-c-parser          -> arena, diagnostics, c-ast, c-lexer
-c-sema            -> arena, diagnostics, c-ast
-c-bridge          -> arena, diagnostics, c-ast, c-sema, hir
+c-parser          -> arena, diagnostics, c-ast, c-lexer, utils
+c-sema            -> arena, diagnostics, c-ast, utils
+c-bridge          -> arena, diagnostics, c-ast, hir
 c-driver          -> all of the above
 ```
 

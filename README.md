@@ -14,8 +14,11 @@ Source ↔ HIR ↔ MIR (SSA + CFG) ↔ LIR (roles + layout) ↔ ASM ↔ Binary
 ```
 
 This repository currently implements the **frontend convergence point**: shared
-infrastructure, the shared HIR, and a **C89/C99 frontend** that lowers into HIR. The
-MIR / LIR / ASM / Binary stages are intentionally deferred.
+infrastructure, the shared HIR, and a dialect-aware **C frontend** that lowers into HIR. The
+frontend accepts C89/C90, C99, C11, C17/C18, and C23 modes; the C89/C99 surface has the most
+complete structure-preserving HIR coverage, while selected C11/C23 constructs are parsed and
+carried through the current representation. The MIR / LIR / ASM / Binary stages are
+intentionally deferred.
 
 ```text
    C source
@@ -32,51 +35,41 @@ MIR / LIR / ASM / Binary stages are intentionally deferred.
                                                                v
                                 +----------+   C AST   +------------------+
                                 |  c-ast   | <-------- |     c-parser     |
-                                +----------+           +------------------+
+                                +----+-----+           +------------------+
                                      |
-                                     v
-                                +----------+   symbols  +------------------+
-                                | c-sema   | ---------> |    c-bridge      |
-                                +----------+            +--------+---------+
-                                                                 |  HirBridge
-                                                                 v
-                                                          +-------------+
-                                                          |     hir     |  (language-neutral)
-                                                          +-------------+
+                         +-----------+-----------+
+                         |                       |
+                         v                       v
+                   +-------------+          +----------+
+                   | c-sema      |          | c-bridge |
+                   | diagnostics |          +----+-----+
+                   +-------------+               |  HirBridge
+                                                 v
+                                          +-------------+
+                                          |     hir     |  (language-neutral)
+                                          +-------------+
 ```
 
 Everything is sequenced by the `stratum-c` driver.
 
 ## Crates
 
-| Crate                    | Responsibility                                                                                                |
-|--------------------------|---------------------------------------------------------------------------------------------------------------|
-| `stratum-arena`          | Index-based arenas (`Id<T>`, `Arena<T>`) and a string `Interner`. No deps.                                    |
-| `stratum-diagnostics`    | `FileId`, `Span`, `SourceMap` (files + include stack + macro provenance), `Diagnostic`. No deps.              |
+| Crate                    | Responsibility                                                                                                 |
+|--------------------------|----------------------------------------------------------------------------------------------------------------|
+| `stratum-utils`          | Shared hash-map / hash-set aliases backed by `rustc_hash` / `hashbrown`.                                       |
+| `stratum-arena`          | Index-based arenas (`Id<T>`, `Arena<T>`) and a string `Interner`. Depends only on `stratum-utils`.             |
+| `stratum-diagnostics`    | `FileId`, `Span`, `SourceMap` (files + include stack + macro provenance), `Diagnostic`. No crate deps.         |
 | `stratum-hir`            | The shared, faithful HIR: nodes, high-level types, `HirContext`, and the `HirBridge` trait.                    |
-| `stratum-c-lexer`        | C89/C99 lexer producing **preprocessing tokens** plus the final token vocabulary.                             |
-| `stratum-c-preprocessor` | `#include`, object/function macros (`#`/`##`, rescanning), conditionals with a constant-expression evaluator. |
-| `stratum-c-ast`          | The private, data-oriented C AST (`CNode` arena) plus an S-expression dumper.                                 |
-| `stratum-c-parser`       | Token finalization + a recursive-descent C parser (with the typedef "lexer hack").                            |
-| `stratum-c-sema`         | Skeletal semantic layer: scoped symbol tables, typedefs, enum constants.                                      |
-| `stratum-c-bridge`       | Implements `HirBridge` for C: total, faithful lowering of every construct, and raising HIR back to C source.   |
-| `stratum-c-driver`       | The `stratum-c` CLI binary that runs the whole pipeline.                                                      |
+| `stratum-c-lexer`        | Dialect-aware C lexer producing **preprocessing tokens** plus the final token vocabulary.                      |
+| `stratum-c-preprocessor` | `#include`, object/function macros (`#`/`##`, rescanning), conditionals with a constant-expression evaluator.  |
+| `stratum-c-ast`          | The private, data-oriented C AST (`CNode` arena) plus an S-expression dumper.                                  |
+| `stratum-c-parser`       | Token finalization + a recursive-descent, dialect-gated C parser (with the typedef "lexer hack").              |
+| `stratum-c-sema`         | Basic semantic layer: scoped ordinary identifiers, typedefs, functions, variables, parameters, enum constants. |
+| `stratum-c-bridge`       | Implements `HirBridge` for C: structure-preserving lowering to HIR and raising HIR back to C source.           |
+| `stratum-c-driver`       | The `stratum-c` CLI binary that runs the whole pipeline.                                                       |
 
 See [`docs/architecture.md`](docs/architecture.md) for the design rationale (CST/AST/HIR
 separation, data-oriented design, span provenance, and the lowering convergence model).
-
-## Building and testing
-
-The workspace is **std-only** (zero external dependencies) and uses strict lints
-(`deny(warnings)`, `clippy::pedantic`, and more).
-
-```sh
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets
-cargo fmt --all --check
-cargo doc --workspace --no-deps
-```
 
 ## Using the C driver
 
@@ -92,6 +85,9 @@ cargo run -p stratum-c-driver -- --emit hir      path/to/file.c
 
 # Add #include search directories.
 cargo run -p stratum-c-driver -- -I include -I /usr/include path/to/file.c
+
+# Select an ISO C dialect (default: c23).
+cargo run -p stratum-c-driver -- --std c99 path/to/file.c
 ```
 
 For example, this C input:
@@ -113,25 +109,6 @@ module
           name `a`
           name `b`
 ```
-
-## Status and scope
-
-This is an **initial project structure**, delivered with full unit and integration tests and
-documentation. The C frontend provides **complete structural coverage of C89/C99**: the lexer,
-preprocessor, parser, and lowering together accept every standard declaration, statement,
-expression, type, and initializer form; including C99 designated initializers and compound
-literals;  the **HIR represents each one faithfully** (control flow keeps its
-`while`/`do`/`for`/`switch` shapes; `goto`/labels, casts, `sizeof`, member access, subscripting,
-the conditional and comma operators, compound assignment, pre/post increment, and
-`typedef`/aggregate/enum declarations all survive). Lowering is **total**: it never drops a
-construct or emits an "unsupported construct" diagnostic, and `source ↔ HIR` round-trips are
-covered by losslessness tests.
-
-The HIR deliberately stays high-level and **unresolved**: names appear as `HirNode::Name` and
-type names as `HirType::Named`. Full semantic analysis (symbol/type resolution, integer
-promotions, linkage, tentative definitions), a few constructs that are represented
-structurally rather than fully modeled semantically (e.g. variable-length arrays, `_Complex`,
-K&R parameter lists), and the MIR/LIR/ASM/Binary back-ends are future work.
 
 ## License
 

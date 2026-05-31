@@ -1,6 +1,6 @@
 [package]
 name = "stratum_c_lexer"
-description = "C89/C99 lexer producing preprocessing tokens for Stratum"
+description = "Dialect-aware C lexer producing preprocessing tokens for Stratum"
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true

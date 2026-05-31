@@ -9,14 +9,19 @@ LIR, ASM, …) never need to know which language the code came from.
 ## Faithful, not lossy
 
 Compared with a raw syntax tree the HIR drops concrete syntax and keywords, yet it keeps a
-**faithful, structured representation of every C89/C99 construct**:
+**faithful, structured representation of the C89/C99 core that the current bridge models**:
 
 - control flow keeps its original shapes `While`, `DoWhile`, `For`, `Conditional`,
   `Switch`/`Case`/`Default`, `Label`/`Goto`, `Break`/`Continue`/`Return`;
 - expressions retain casts, `sizeof`, member access (`.`/`->`), subscripting, the conditional
   and comma operators, compound assignment, and pre/post increment;
 - declarations carry storage classes, qualifiers, aggregates, enumerations, `typedef`s,
-  bit-fields, and (C99) designated initializers and compound literals.
+  bit-fields, and designated initializers and compound literals.
+
+The C frontend accepts dialects through C23. Some newer constructs currently reuse existing
+HIR shapes instead of having dedicated nodes: boolean constants and `nullptr` lower as integer
+literals, `_Alignof` / `alignof` reuse the `sizeof` nodes, and `_Generic` is lowered by the
+current bridge to a selected expression rather than a typed selection node.
 
 It stays **high-level**: named bindings, lexical blocks, and high-level types survive, and
 symbol/type *resolution* is deliberately deferred; names appear as `HirNode::Name` and source

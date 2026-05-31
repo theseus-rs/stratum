@@ -16,9 +16,6 @@ threads without lifetime gymnastics.
 - **`Symbol` / `Interner`**: string interning, so repeated identifiers become a single
   cheap, copyable `Symbol`.
 
-This crate is intentionally **dependency-free** and knows nothing about any particular
-language frontend or IR.
-
 ## Example
 
 ```rust

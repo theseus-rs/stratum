@@ -1,6 +1,6 @@
 [package]
 name = "stratum_c_parser"
-description = "Recursive-descent C89/C99 parser for Stratum"
+description = "Dialect-gated recursive-descent C parser for Stratum"
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true

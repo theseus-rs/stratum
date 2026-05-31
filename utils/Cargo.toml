@@ -1,5 +1,6 @@
 [package]
 name = "stratum_utils"
+description = "Shared utilities for the Stratum compiler"
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true

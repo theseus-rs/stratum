@@ -8,13 +8,15 @@ be a "universal" tree, that role belongs to [`stratum-hir`](../../../hir). Follo
 data-oriented design, nodes are stored in a flat `CAst` arena and referenced by `CNodeId`.
 
 The tree records *syntax*, not *meaning*: names are unresolved `Symbol`s and numbers keep their
-raw spellings. Resolution and typing happen later, in the semantic analyzer and lowering.
+raw spellings. The current semantic pass collects basic symbol information; full resolution and
+typing happen in later work.
 
 ## What it provides
 
 - **`CNode` / `CNodeId`**: the C node vocabulary (declarations, declarators with derivations,
-  type specifiers, the full expression set, statements, external declarations, and C99
-  designated initializers / compound literals) in a flat arena with a parallel span array.
+  type specifiers, expressions, statements, external declarations, dialect-gated C11/C23
+  forms, and designated initializers / compound literals) in a flat arena with a parallel
+  span array.
 - **`CAst`**: the container, with a node count and a root.
 - A stable **S-expression dumper** (`dump_root`) used by parser tests.
 

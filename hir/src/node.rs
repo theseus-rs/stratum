@@ -1,10 +1,11 @@
 //! HIR node definitions.
 //!
-//! The HIR is rich enough to represent every C89/C99 construct faithfully: control flow
+//! The HIR is rich enough to represent the currently modeled C core faithfully: control flow
 //! keeps its original `while`/`do`/`for`/`switch` shapes, expressions retain casts,
 //! `sizeof`, member access, subscripting, the conditional and comma operators, compound
 //! assignment, and pre/post increment, and declarations carry storage classes, qualifiers,
-//! aggregates, enumerations, and `typedef`s. Nothing the parser produces is dropped.
+//! aggregates, enumerations, and `typedef`s. Some newer dialect constructs reuse existing HIR
+//! forms until their full semantics are modeled.
 
 use crate::alloc_prelude::*;
 use crate::context::{HirNodeId, HirTypeId};

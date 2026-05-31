@@ -1,9 +1,10 @@
 //! Expression lowering: C expressions into HIR expression nodes.
 //!
-//! Every C expression maps to a faithful HIR node — casts keep their target type, `sizeof`
+//! Core C expressions map to structured HIR nodes; casts keep their target type, `sizeof`
 //! keeps its operand, compound assignment and increment/decrement stay first-class rather
-//! than being desugared, and the comma and conditional operators survive intact. Nothing is
-//! dropped, so lowering never has to emit an "unsupported" diagnostic for an expression.
+//! than being desugared, and the comma and conditional operators survive intact. Some newer
+//! dialect expressions currently reuse existing HIR nodes until the HIR grows dedicated
+//! semantic forms for them.
 
 use crate::alloc_prelude::*;
 use crate::lower::CLowering;

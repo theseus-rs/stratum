@@ -1,6 +1,6 @@
 # stratum-c-lexer
 
-The C89/C99 lexer for Stratum (translation phases 1–3).
+The dialect-aware C lexer for Stratum (early translation phases).
 
 This crate turns raw source text into a stream of **preprocessing tokens** (`PpToken`),
 performing only the earliest translation phases: line splicing (`\`-newline), comment removal,
@@ -9,7 +9,8 @@ parsing numeric values, or concatenating adjacent string literals, those steps b
 preprocessing and are handled during token finalization in the parser.
 
 The lexer is entirely **context-free**: it knows nothing about `#include`, macros, or the C
-grammar. The "typedef lexer hack" is resolved later, in the parser.
+grammar. The "typedef lexer hack" is resolved later, in the parser. Keyword classification is
+dialect-gated for C89/C90, C99, C11, C17/C18, and C23 during finalization.
 
 ## What it provides
 

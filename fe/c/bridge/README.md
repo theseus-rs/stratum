@@ -4,15 +4,16 @@ The **bidirectional bridge** between the private C AST and the shared, language-
 [HIR](../../../hir).
 
 This crate is the **convergence seam** of the C frontend: in the forward direction it consumes
-the `CAst` (and the symbols collected by [`stratum-c-sema`](../sema)) and emits `HirNode`s into
-a `HirContext`; in the reverse direction it raises that HIR back into equivalent C source.
-After the forward step nothing downstream needs to know the code originated from C.
+the unresolved `CAst` and emits `HirNode`s into a `HirContext`; in the reverse direction it
+raises that HIR back into equivalent C source for the modeled HIR surface. The driver runs
+[`stratum-c-sema`](../sema) before lowering to collect diagnostics, but the current bridge does
+not consume sema's symbol table yet. After the forward step nothing downstream needs to know
+the code originated from C.
 
-## Total, faithful lowering
+## Structure-preserving lowering
 
-Because the HIR has a dedicated representation for every C89/C99 construct, lowering is **total
-and structure-preserving**; it never drops a construct or emits an "unsupported construct"
-diagnostic:
+Because the HIR has dedicated representation for the C89/C99 core, lowering is
+structure-preserving for that surface:
 
 - `while`, `do`/`while`, and `for` each lower to the matching HIR loop (no break-guard
   rewriting); `switch`/`case`/`default`, labels, and `goto` are preserved.
@@ -22,6 +23,11 @@ diagnostic:
   away.
 - C99 designated initializers and compound literals are preserved as structured initializer
   trees.
+
+Some newer dialect constructs currently reuse existing HIR nodes instead of dedicated
+semantic forms: boolean constants and `nullptr` lower to integer literals, `_Alignof` /
+`alignof` reuse `sizeof` nodes, and `_Generic` lowers to a selected expression according to the
+current bridge implementation.
 
 The C AST and the `HirContext` own *separate* string interners, so every name is re-interned
 through a single helper as it crosses the boundary.
@@ -33,12 +39,6 @@ through a single helper as it crosses the boundary.
 - **`CBridge`**: a zero-sized marker implementing the HIR `HirBridge` contract in both
   directions.
 - **`CLowering`**: the lowering driver that `CBridge`'s forward direction delegates to.
-
-## Testing
-
-In addition to unit tests asserting faithful HIR output, `tests/roundtrip.rs` proves
-`source ↔ HIR` losslessness: each fixture is lowered to HIR, raised back to C, and lowered
-again, and the two HIR dumps must be identical.
 
 ## Example
 
