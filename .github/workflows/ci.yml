@@ -23,113 +23,367 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux-arm
-          - linux-riscv64
-          - linux-s390x
-          - linux-x64
-          - macos-arm
-          - macos-x64
-          - windows-arm
-          - windows-x64
-
         include:
+          # Native builds
           - platform: linux-arm
+            cross: false
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - platform: linux-riscv64
-            os: ubuntu-latest
-            target: riscv64gc-unknown-linux-gnu
-          - platform: linux-s390x
-            os: ubuntu-latest
-            target: s390x-unknown-linux-gnu
           - platform: linux-x64
+            cross: false
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - platform: macos-arm
+            cross: false
             os: macos-26
             target: aarch64-apple-darwin
           - platform: macos-x64
+            cross: false
             os: macos-26-intel
             target: x86_64-apple-darwin
           - platform: windows-arm
+            cross: false
             os: windows-11-arm
             target: aarch64-pc-windows-msvc
           - platform: windows-x64
+            cross: false
             os: windows-latest
             target: x86_64-pc-windows-msvc
+          # Cross builds
+          - platform: aarch64-android
+            cross: true
+            os: ubuntu-24.04-arm
+            target: aarch64-linux-android
+          - platform: aarch64-linux-musl
+            cross: true
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - platform: aarch64be-linux-gnu
+            cross: true
+            os: ubuntu-24.04-arm
+            target: aarch64_be-unknown-linux-gnu
+            build_std: true
+          - platform: arm-android
+            cross: true
+            os: ubuntu-24.04-arm
+            target: arm-linux-androideabi
+          - platform: arm-linux-gnueabi
+            cross: true
+            os: ubuntu-24.04-arm
+            target: arm-unknown-linux-gnueabi
+          - platform: arm-linux-gnueabihf
+            cross: true
+            os: ubuntu-24.04-arm
+            target: arm-unknown-linux-gnueabihf
+          - platform: arm-linux-musleabi
+            cross: true
+            os: uubuntu-24.04-arm
+            target: arm-unknown-linux-musleabi
+          - platform: arm-linux-musleabihf
+            cross: true
+            os: ubuntu-24.04-arm
+            target: arm-unknown-linux-musleabihf
+          - platform: armv5te-linux-gnueabi
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv5te-unknown-linux-gnueabi
+          - platform: armv5te-linux-musleabi
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv5te-unknown-linux-musleabi
+          - platform: armv7-android
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv7-linux-androideabi
+          - platform: armv7-linux-gnueabi
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv7-unknown-linux-gnueabi
+          - platform: armv7-linux-gnueabihf
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv7-unknown-linux-gnueabihf
+          - platform: armv7-linux-musleabi
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv7-unknown-linux-musleabi
+          - platform: armv7-linux-musleabihf
+            cross: true
+            os: ubuntu-24.04-arm
+            target: armv7-unknown-linux-musleabihf
+          - platform: i586-linux-gnu
+            cross: true
+            os: ubuntu-24.04-arm
+            target: i586-unknown-linux-gnu
+          - platform: i586-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: i586-unknown-linux-musl
+          - platform: i686-android
+            cross: true
+            os: ubuntu-latest
+            target: i686-linux-android
+          - platform: i686-windows-gnu
+            cross: true
+            os: ubuntu-latest
+            target: i686-pc-windows-gnu
+          - platform: i686-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+          - platform: i686-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: i686-unknown-linux-musl
+          - platform: loongarch64-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: loongarch64-unknown-linux-gnu
+          - platform: loongarch64-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: loongarch64-unknown-linux-musl
+          - platform: mips-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: mips-unknown-linux-gnu
+            build_std: true
+          - platform: mips-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: mips-unknown-linux-musl
+            build_std: true
+          - platform: mips64-linux-gnuabi64
+            cross: true
+            os: ubuntu-latest
+            target: mips64-unknown-linux-gnuabi64
+            build_std: true
+          - platform: mips64-linux-muslabi64
+            cross: true
+            os: ubuntu-latest
+            target: mips64-unknown-linux-muslabi64
+            build_std: true
+          - platform: mips64el-linux-gnuabi64
+            cross: true
+            os: ubuntu-latest
+            target: mips64el-unknown-linux-gnuabi64
+            build_std: true
+          - platform: mips64el-linux-muslabi64
+            cross: true
+            os: ubuntu-latest
+            target: mips64el-unknown-linux-muslabi64
+            build_std: true
+          - platform: mipsel-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: mipsel-unknown-linux-gnu
+            build_std: true
+          - platform: mipsel-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: mipsel-unknown-linux-musl
+            build_std: true
+          - platform: powerpc-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: powerpc-unknown-linux-gnu
+          - platform: powerpc64-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: powerpc64-unknown-linux-gnu
+          - platform: powerpc64le-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+          - platform: linux-riscv64
+            cross: true
+            os: ubuntu-latest
+            target: riscv64gc-unknown-linux-gnu
+          - platform: riscv64-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: riscv64gc-unknown-linux-musl
+          - platform: linux-s390x
+            cross: true
+            os: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+          - platform: sparc64-linux-gnu
+            cross: true
+            os: ubuntu-latest
+            target: sparc64-unknown-linux-gnu
+          - platform: thumbv7neon-android
+            cross: true
+            os: ubuntu-latest
+            target: thumbv7neon-linux-androideabi
+          - platform: thumbv7neon-linux-gnueabihf
+            cross: true
+            os: ubuntu-latest
+            target: thumbv7neon-unknown-linux-gnueabihf
+          - platform: wasm32-emscripten
+            cross: true
+            os: ubuntu-latest
+            target: wasm32-unknown-emscripten
+          - platform: x86_64-android
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-linux-android
+          - platform: x86_64-windows-gnu
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-pc-windows-gnu
+          - platform: x86_64-linux-musl
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          # These are cross-supported Rust targets without documented cross test support.
+          - platform: i686-freebsd
+            cross: true
+            os: ubuntu-latest
+            target: i686-unknown-freebsd
+            run_tests: false
+          - platform: sparcv9-solaris
+            cross: true
+            os: ubuntu-latest
+            target: sparcv9-sun-solaris
+            run_tests: false
+          - platform: thumbv6m-none-eabi
+            cross: true
+            os: ubuntu-latest
+            target: thumbv6m-none-eabi
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv7em-none-eabi
+            cross: true
+            os: ubuntu-latest
+            target: thumbv7em-none-eabi
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv7em-none-eabihf
+            cross: true
+            os: ubuntu-latest
+            target: thumbv7em-none-eabihf
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv7m-none-eabi
+            cross: true
+            os: ubuntu-latest
+            target: thumbv7m-none-eabi
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv8m-base-none-eabi
+            cross: true
+            os: ubuntu-latest
+            target: thumbv8m.base-none-eabi
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv8m-main-none-eabi
+            cross: true
+            os: ubuntu-latest
+            target: thumbv8m.main-none-eabi
+            no_default_features: true
+            run_tests: false
+          - platform: thumbv8m-main-none-eabihf
+            cross: true
+            os: ubuntu-latest
+            target: thumbv8m.main-none-eabihf
+            no_default_features: true
+            run_tests: false
+          - platform: x86_64-solaris
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-pc-solaris
+            run_tests: false
+          - platform: x86_64-freebsd
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-unknown-freebsd
+            run_tests: false
+          - platform: x86_64-dragonfly
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-unknown-dragonfly
+            build_std: true
+            run_tests: false
+          - platform: x86_64-illumos
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-unknown-illumos
+            run_tests: false
+          - platform: x86_64-netbsd
+            cross: true
+            os: ubuntu-latest
+            target: x86_64-unknown-netbsd
+            run_tests: false
 
     steps:
       - name: Checkout source code
         uses: actions/checkout@v6
 
       - name: Install Rust
+        if: ${{ !matrix.cross }}
         uses: dtolnay/rust-toolchain@master
         with:
+          components: clippy
           targets: ${{ matrix.target }}
           toolchain: stable
 
+      - name: Install Rust
+        if: ${{ matrix.cross && !matrix.build_std }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          components: clippy
+          toolchain: stable
+
+      - name: Install Rust nightly
+        if: ${{ matrix.cross && matrix.build_std }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          components: clippy, rust-src
+          toolchain: nightly
+
       - name: Install cross
-        if: ${{ matrix.platform == 'linux-riscv64' || matrix.platform == 'linux-s390x' }}
+        if: ${{ matrix.cross }}
         uses: taiki-e/install-action@main
         with:
           tool: cross
 
       - name: Run clippy
-        if: ${{ matrix.platform == 'linux-riscv64' || matrix.platform == 'linux-s390x' }}
+        if: ${{ !matrix.cross }}
+        env:
+          CARGO_TERM_COLOR: always
+        run: |
+          cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+
+      - name: Run clippy
+        if: ${{ matrix.cross && !matrix.build_std && !matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
         run: |
           cross clippy --workspace --target ${{ matrix.target }} -- -D warnings
 
       - name: Run clippy
-        if: ${{ matrix.platform != 'linux-riscv64' && matrix.platform != 'linux-s390x' && matrix.platform != 'wasm32-wasi' }}
+        if: ${{ matrix.cross && matrix.no_default_features }}
         env:
           CARGO_TERM_COLOR: always
         run: |
-          rustup target install ${{ matrix.target }}
-          cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+          cross clippy --workspace --no-default-features --target ${{ matrix.target }} -- -D warnings
 
-      - name: Build
-        if: ${{ matrix.platform == 'linux-riscv64' || matrix.platform == 'linux-s390x' }}
+      - name: Run clippy
+        if: ${{ matrix.cross && matrix.build_std }}
         env:
           CARGO_TERM_COLOR: always
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-          RUST_BACKTRACE: 1
-          RUST_LOG: info
         run: |
-          cross build --workspace --target ${{ matrix.target }}
-
-      - name: Build
-        if: ${{ matrix.platform != 'linux-riscv64' && matrix.platform != 'linux-s390x' }}
-        env:
-          CARGO_TERM_COLOR: always
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-          RUST_BACKTRACE: 1
-          RUST_LOG: info
-        run: |
-          rustup target install ${{ matrix.target }}
-          cargo build --workspace --target ${{ matrix.target }}
+          cross +nightly clippy -Z build-std --workspace --target ${{ matrix.target }} -- -D warnings
 
       - name: Tests
-        if: ${{ matrix.platform != 'linux-riscv64' && matrix.platform != 'linux-s390x' && matrix.platform != 'macos-arm' }}
+        if: ${{ !matrix.cross && matrix.platform != 'macos-arm' }}
         env:
           CARGO_TERM_COLOR: always
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
           RUST_LOG: info
         run: |
           cargo test --profile release-tests --workspace --all-features
-
-      - name: Tests
-        if: ${{ matrix.platform == 'linux-riscv64' && matrix.platform == 'linux-s390x'}}
-        env:
-          CARGO_TERM_COLOR: always
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-          RUST_BACKTRACE: 1
-          RUST_LOG: info
-        run: |
-          cross test --profile release-tests --workspace --all-features --target ${{ matrix.target }}
 
       - name: Install cargo-llvm-cov
         if: ${{ matrix.platform == 'macos-arm' }}
@@ -141,19 +395,69 @@ jobs:
         if: ${{ matrix.platform == 'macos-arm' }}
         env:
           CARGO_TERM_COLOR: always
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_BACKTRACE: 1
           RUST_LOG: info
           RUST_LOG_SPAN_EVENTS: full
         run: |
           cargo llvm-cov --profile release-tests --workspace --lcov --output-path lcov.info
 
-      - name: Upload to codecov.io
-        if: ${{ matrix.platform == 'macos-arm' }}
-        uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-          verbose: true
+#      - name: Upload to codecov.io
+#        if: ${{ matrix.platform == 'macos-arm' }}
+#        uses: codecov/codecov-action@v5
+#        with:
+#          files: lcov.info
+#          fail_ci_if_error: true
+#          verbose: true
+#        env:
+#          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Tests
+        if: ${{ matrix.cross && matrix.run_tests != false && !matrix.build_std }}
         env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+        run: |
+          cross test --profile release-tests --workspace --all-features --target ${{ matrix.target }}
+
+      - name: Tests
+        if: ${{ matrix.cross && matrix.run_tests != false && matrix.build_std }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+        run: |
+          cross +nightly test -Z build-std --profile release-tests --workspace --all-features --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ matrix.cross && matrix.run_tests == false && !matrix.build_std && !matrix.no_default_features }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+        run: |
+          cross build --workspace --all-features --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ matrix.cross && matrix.run_tests == false && matrix.no_default_features }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+        run: |
+          cross build --workspace --no-default-features --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ matrix.cross && matrix.run_tests == false && matrix.build_std }}
+        env:
+          CARGO_TERM_COLOR: always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+        run: |
+          cross +nightly build -Z build-std --workspace --all-features --target ${{ matrix.target }}
