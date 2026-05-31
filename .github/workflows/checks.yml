@@ -50,7 +50,7 @@ jobs:
       - name: Install cargo deny
         run: cargo install cargo-deny
       - name: Check licenses
-        run: cargo deny check --allow duplicate
+        run: cargo deny check
 
   doc:
     runs-on: ubuntu-latest
