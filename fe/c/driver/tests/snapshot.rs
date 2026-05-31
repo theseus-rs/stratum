@@ -10,6 +10,10 @@ use stratum_c_driver::{Emit, compile_source};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+fn normalize_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
@@ -34,8 +38,10 @@ fn check_fixture(stem: &str) -> TestResult {
     }
 
     let expected = std::fs::read_to_string(&snapshot_path)?;
+    let actual = normalize_newlines(&result.output);
+    let expected = normalize_newlines(&expected);
     assert_eq!(
-        result.output, expected,
+        actual, expected,
         "HIR for `{stem}` did not match snapshot; set UPDATE_SNAPSHOT=1 to regenerate"
     );
     Ok(())
