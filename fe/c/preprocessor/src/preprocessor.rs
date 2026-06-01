@@ -46,6 +46,8 @@ struct WToken {
 
 /// State for one `#if`/`#ifdef`/`#ifndef` group.
 struct Cond {
+    /// The span of the opening conditional directive.
+    start: Span,
     /// Whether the currently selected branch is active (already folds in ancestor activity).
     taken: bool,
     /// Whether any branch in this group has been taken yet.
@@ -75,6 +77,7 @@ pub fn preprocess<R: IncludeResolver>(
         diagnostics: Vec::new(),
         output: Vec::new(),
         conds: Vec::new(),
+        cond_bases: Vec::new(),
         depth: 0,
     };
     pp.run(file, source);
@@ -92,16 +95,20 @@ struct Preprocessor<'a, R: IncludeResolver> {
     diagnostics: Vec<Diagnostic>,
     output: Vec<PpToken>,
     conds: Vec<Cond>,
+    cond_bases: Vec<usize>,
     depth: usize,
 }
 
 impl<R: IncludeResolver> Preprocessor<'_, R> {
     fn run(&mut self, file: FileId, source: &str) {
-        let lexed = lex(source, file, self.interner);
-        if let Ok(lexed) = lexed {
+        let cond_base = self.conds.len();
+        self.cond_bases.push(cond_base);
+        if let Ok(lexed) = lex(source, file, self.interner) {
             self.diagnostics.extend(lexed.diagnostics);
             self.process_lines(file, &lexed.tokens);
         }
+        self.close_unterminated_conditionals(cond_base);
+        self.cond_bases.pop();
     }
 
     fn active(&self) -> bool {
@@ -157,6 +164,16 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
     fn do_define(&mut self, line: &[PpToken], hash: Span) {
         match parse_define(line, hash) {
             Ok(def) => {
+                if let Some(previous) = self.macros.get(&def.name)
+                    && !macro_compatible(previous, &def)
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error("conflicting macro redefinition")
+                            .with_label(Label::new(def.span, "redefined here"))
+                            .with_label(Label::new(previous.span, "previous definition here")),
+                    );
+                    return;
+                }
                 self.macros.insert(def.name, def);
             }
             Err(diag) => self.diagnostics.push(diag),
@@ -181,6 +198,7 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
             false
         };
         self.conds.push(Cond {
+            start: hash,
             taken,
             done: taken,
             seen_else: false,
@@ -196,6 +214,7 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
         };
         let taken = self.active() && (defined == want_defined);
         self.conds.push(Cond {
+            start: hash,
             taken,
             done: taken,
             seen_else: false,
@@ -203,44 +222,65 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
     }
 
     fn do_elif(&mut self, line: &[PpToken], hash: Span) {
-        let parent_active = self.parent_active();
-        let Some(cond) = self.conds.last_mut() else {
+        if self.conds.len() <= self.cond_base() {
             self.error(hash, "`#elif` without `#if`");
             return;
-        };
+        }
+        let index = self.conds.len().saturating_sub(1);
+        let mut cond = self.conds.remove(index);
+        let parent_active = self.conds.iter().all(|c| c.taken);
         if cond.seen_else {
+            self.conds.push(cond);
             self.error(hash, "`#elif` after `#else`");
             return;
         }
         if cond.done || !parent_active {
             cond.taken = false;
+            self.conds.push(cond);
             return;
         }
         let taken = self.eval_condition(line, hash);
-        if let Some(cond) = self.conds.last_mut() {
-            cond.taken = taken;
-            cond.done = taken;
-        }
+        cond.taken = taken;
+        cond.done = taken;
+        self.conds.push(cond);
     }
 
     fn do_else(&mut self, hash: Span) {
-        let parent_active = self.parent_active();
-        let Some(cond) = self.conds.last_mut() else {
+        if self.conds.len() <= self.cond_base() {
             self.error(hash, "`#else` without `#if`");
             return;
-        };
+        }
+        let parent_active = self.parent_active();
+        let index = self.conds.len().saturating_sub(1);
+        let mut cond = self.conds.remove(index);
         if cond.seen_else {
+            self.conds.push(cond);
             self.error(hash, "duplicate `#else`");
             return;
         }
         cond.seen_else = true;
         cond.taken = parent_active && !cond.done;
         cond.done = true;
+        self.conds.push(cond);
     }
 
     fn do_endif(&mut self, hash: Span) {
-        if self.conds.pop().is_none() {
+        if self.conds.len() <= self.cond_base() || self.conds.pop().is_none() {
             self.error(hash, "`#endif` without `#if`");
+        }
+    }
+
+    fn cond_base(&self) -> usize {
+        self.cond_bases.last().copied().unwrap_or(0)
+    }
+
+    fn close_unterminated_conditionals(&mut self, cond_base: usize) {
+        if self.conds.len() <= cond_base {
+            return;
+        }
+        let unclosed = self.conds.split_off(cond_base);
+        for cond in unclosed {
+            self.error(cond.start, "unterminated conditional directive");
         }
     }
 
@@ -278,9 +318,7 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
                 && let Some((value, consumed)) =
                     self.match_defined(line.get(i + 1..).unwrap_or_default())
             {
-                if let Some(tok) = self.make_number(value, tok.span) {
-                    out.push(tok);
-                }
+                out.push(self.make_number(value, tok.span));
                 i += 1 + consumed;
                 continue;
             }
@@ -324,20 +362,24 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
             self.error(hash, &format!("cannot find include `{name}`"));
             return;
         };
-        let included =
-            self.source_map
-                .add_include(resolved.name, resolved.contents.clone(), file, hash);
-        if let Ok(included) = included {
-            self.depth += 1;
-            self.run(included, &resolved.contents);
-            self.depth -= 1;
-        }
+        self.source_map
+            .add_include(resolved.name, resolved.contents.clone(), file, hash)
+            .ok()
+            .into_iter()
+            .for_each(|included| {
+                self.depth += 1;
+                self.run(included, &resolved.contents);
+                self.depth -= 1;
+            });
     }
 
     /// Determines the include target spelling and whether it used angle brackets.
     fn include_target(&mut self, line: &[PpToken], hash: Span) -> Option<(String, bool)> {
         let expanded = self.expand_to_pp(line.to_vec());
-        let first = expanded.first()?;
+        let Some(first) = expanded.first() else {
+            self.error(hash, "`#include` expects \"file\" or <file>");
+            return None;
+        };
         match first.kind {
             PpTokenKind::StringLit(_) => {
                 let raw = spelling(first, self.interner);
@@ -418,7 +460,8 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
     fn invoke_object_macro(&mut self, item: &WToken, def: &MacroDef, input: &mut VecDeque<WToken>) {
         let mut hide = item.hide.clone();
         hide.insert(def.name);
-        let repl = self.subst(def, &[], &hide, item.tok.span);
+        let repl = self.subst(def, &[], &hide);
+        let repl = self.wrap_macro_expansion(def, repl, item.tok.span);
         prepend(input, repl);
     }
 
@@ -446,27 +489,27 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
         let mut hide: HashSet<Symbol> = item.hide.intersection(&close.hide).copied().collect();
         hide.insert(def.name);
         let normalized = normalize_args(args, arity, def.variadic);
-        let repl = self.subst(def, &normalized, &hide, item.tok.span);
+        let repl = self.subst(def, &normalized, &hide);
+        let repl = self.wrap_macro_expansion(def, repl, item.tok.span);
         prepend(input, repl);
         true
     }
 
     fn check_arity(&mut self, def: &MacroDef, args: &[Vec<WToken>], span: Span) -> bool {
         let arity = def.params.as_ref().map_or(0, Vec::len);
-        let supplied = if args.len() == 1 && args.first().is_some_and(Vec::is_empty) {
+        let supplied = if matches!(args, [arg] if arg.is_empty()) {
             0
         } else {
             args.len()
         };
-        let ok = if def.variadic {
-            supplied >= arity
-        } else {
-            supplied == arity || (arity == 0 && supplied == 0)
-        };
-        if !ok {
-            self.error(span, "macro invoked with the wrong number of arguments");
+        if def.variadic && supplied >= arity {
+            return true;
         }
-        ok
+        if !def.variadic && supplied == arity {
+            return true;
+        }
+        self.error(span, "macro invoked with the wrong number of arguments");
+        false
     }
 
     /// Substitutes parameters in a macro body, applying `#`, `##`, and the hide set.
@@ -475,7 +518,6 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
         def: &MacroDef,
         args: &[Vec<WToken>],
         hide: &HashSet<Symbol>,
-        call_site: Span,
     ) -> Vec<WToken> {
         let mut os: Vec<WToken> = Vec::new();
         let mut pending_paste = false;
@@ -491,9 +533,7 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
                 && let Some(arg) = self.body_param_arg(def, args, def.body.get(j + 1))
             {
                 let text = stringize_w(&arg, self.interner);
-                if let Some(tok) = self.make_string_w(&text, tok.span) {
-                    os.push(tok);
-                }
+                os.push(self.make_string_w(&text, tok.span));
                 j += 2;
                 continue;
             }
@@ -504,7 +544,7 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
                 continue;
             }
 
-            let produced = self.subst_token(def, args, tok, next_paste || pending_paste, call_site);
+            let produced = self.subst_token(def, args, tok, next_paste || pending_paste);
             self.emit(&mut os, produced, &mut pending_paste, tok.span);
             j += 1;
         }
@@ -534,16 +574,53 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
         args: &[Vec<WToken>],
         tok: PpToken,
         raw: bool,
-        call_site: Span,
     ) -> Vec<WToken> {
         if let Some(index) = self.param_index(def, &tok) {
             let arg = args.get(index).cloned().unwrap_or_default();
             return if raw { arg } else { self.expand(arg) };
         }
-        vec![WToken::bare(PpToken {
-            span: call_site,
-            ..tok
-        })]
+        vec![WToken::bare(PpToken { ..tok })]
+    }
+
+    fn wrap_macro_expansion(
+        &mut self,
+        def: &MacroDef,
+        mut tokens: Vec<WToken>,
+        call_site: Span,
+    ) -> Vec<WToken> {
+        if tokens.is_empty() {
+            return tokens;
+        }
+        let (text, spans) = self.expansion_text_and_spans(&tokens);
+        let definition = macro_definition_span(def);
+        let name = self
+            .interner
+            .resolve(def.name)
+            .unwrap_or("<invalid>")
+            .to_string();
+        let file = self
+            .source_map
+            .add_expansion(format!("<macro:{name}>"), text, call_site, definition)
+            .unwrap_or(call_site.file());
+        for (token, (start, end)) in tokens.iter_mut().zip(spans) {
+            token.tok.span = Span::new(file, start, end);
+        }
+        tokens
+    }
+
+    fn expansion_text_and_spans(&self, tokens: &[WToken]) -> (String, Vec<(u32, u32)>) {
+        let mut text = String::new();
+        let mut spans = Vec::with_capacity(tokens.len());
+        for (index, token) in tokens.iter().enumerate() {
+            if index > 0 {
+                text.push(' ');
+            }
+            let start = u32::try_from(text.len()).unwrap_or(u32::MAX);
+            text.push_str(&spelling(&token.tok, self.interner));
+            let end = u32::try_from(text.len()).unwrap_or(u32::MAX);
+            spans.push((start, end));
+        }
+        (text, spans)
     }
 
     fn body_param_arg(
@@ -587,46 +664,76 @@ impl<R: IncludeResolver> Preprocessor<'_, R> {
             spelling(&left.tok, self.interner),
             spelling(&right.tok, self.interner)
         );
-        let pasted = self.relex(&text, span);
-        if pasted.is_empty() {
-            self.error(span, "`##` produced an invalid token");
+        let Some(pasted) = self.relex(&text, span) else {
             os.push(left);
-        } else {
-            os.extend(pasted);
-        }
+            os.extend(remainder);
+            return;
+        };
+        os.push(pasted);
         os.extend(remainder);
     }
 
-    fn relex(&mut self, text: &str, span: Span) -> Vec<WToken> {
+    fn relex(&mut self, text: &str, span: Span) -> Option<WToken> {
         let lexed = lex(text, span.file(), self.interner).unwrap_or_default();
-        lexed
+        if lexed.has_errors() {
+            self.error(span, "`##` produced an invalid token");
+            return None;
+        }
+        let tokens: Vec<_> = lexed
             .tokens
             .into_iter()
             .filter(|t| t.kind != PpTokenKind::Newline)
-            .map(|t| WToken::bare(PpToken { span, ..t }))
-            .collect()
+            .collect();
+        let [token] = tokens.as_slice() else {
+            self.error(span, "`##` must produce exactly one token");
+            return None;
+        };
+        if matches!(token.kind, PpTokenKind::Other(_) | PpTokenKind::Newline) {
+            self.error(span, "`##` produced an invalid token");
+            return None;
+        }
+        Some(WToken::bare(PpToken { span, ..*token }))
     }
 
     // --- Token synthesis & diagnostics -----------------------------------------------------
 
-    fn make_number(&mut self, value: i64, span: Span) -> Option<PpToken> {
-        let sym = self.interner.intern(&value.to_string()).ok()?;
-        Some(PpToken {
+    fn make_number(&mut self, value: i64, span: Span) -> PpToken {
+        let text = value.to_string();
+        let result = self.interner.intern(&text);
+        let sym = self.synthesized_symbol(result, span, "number");
+        PpToken {
             kind: PpTokenKind::Number(sym),
+            span,
+            leading_whitespace: true,
+            at_bol: false,
+        }
+    }
+
+    fn make_string_w(&mut self, text: &str, span: Span) -> WToken {
+        let result = self.interner.intern(text);
+        let sym = self.synthesized_symbol(result, span, "string");
+        WToken::bare(PpToken {
+            kind: PpTokenKind::StringLit(sym),
             span,
             leading_whitespace: true,
             at_bol: false,
         })
     }
 
-    fn make_string_w(&mut self, text: &str, span: Span) -> Option<WToken> {
-        let sym = self.interner.intern(text).ok()?;
-        Some(WToken::bare(PpToken {
-            kind: PpTokenKind::StringLit(sym),
-            span,
-            leading_whitespace: true,
-            at_bol: false,
-        }))
+    fn synthesized_symbol(
+        &mut self,
+        result: stratum_arena::Result<Symbol>,
+        span: Span,
+        what: &str,
+    ) -> Symbol {
+        match result {
+            Ok(sym) => sym,
+            Err(err) => {
+                let message = format!("failed to intern preprocessor {what}: {err}");
+                self.error(span, &message);
+                Symbol::default()
+            }
+        }
     }
 
     fn error(&mut self, span: Span, message: &str) {
@@ -681,26 +788,53 @@ fn collect_args(input: &mut VecDeque<WToken>) -> Option<(Vec<Vec<WToken>>, WToke
         match item.tok.kind {
             PpTokenKind::Punct(Punctuator::LParen) => {
                 depth += 1;
-                args.last_mut()?.push(item);
+                push_arg_token(&mut args, item);
             }
             PpTokenKind::Punct(Punctuator::RParen) if depth == 0 => {
                 return Some((args, item));
             }
             PpTokenKind::Punct(Punctuator::RParen) => {
                 depth -= 1;
-                args.last_mut()?.push(item);
+                push_arg_token(&mut args, item);
             }
             PpTokenKind::Punct(Punctuator::Comma) if depth == 0 => {
                 args.push(Vec::new());
             }
-            _ => args.last_mut()?.push(item),
+            _ => push_arg_token(&mut args, item),
         }
+    }
+}
+
+fn push_arg_token(args: &mut [Vec<WToken>], item: WToken) {
+    if let Some(arg) = args.last_mut() {
+        arg.push(item);
+    }
+}
+
+fn macro_compatible(left: &MacroDef, right: &MacroDef) -> bool {
+    left.params == right.params
+        && left.variadic == right.variadic
+        && token_lists_compatible(&left.body, &right.body)
+}
+
+fn token_lists_compatible(left: &[PpToken], right: &[PpToken]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(l, r)| l.kind == r.kind && l.leading_whitespace == r.leading_whitespace)
+}
+
+fn macro_definition_span(def: &MacroDef) -> Span {
+    match (def.body.first(), def.body.last()) {
+        (Some(first), Some(last)) => first.span.to(last.span),
+        _ => def.span,
     }
 }
 
 /// Merges trailing arguments into a single `__VA_ARGS__` argument for variadic macros.
 fn normalize_args(mut args: Vec<Vec<WToken>>, arity: usize, variadic: bool) -> Vec<Vec<WToken>> {
-    if args.len() == 1 && args.first().is_some_and(Vec::is_empty) && arity == 0 {
+    if matches!(args.as_slice(), [arg] if arg.is_empty()) && arity == 0 {
         return Vec::new();
     }
     if !variadic {
@@ -743,13 +877,17 @@ fn stringize_w(tokens: &[WToken], interner: &Interner) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_INCLUDE_DEPTH, Preprocessor, WToken, normalize_args};
+    use super::{
+        Cond, MAX_INCLUDE_DEPTH, MacroDef, Preprocessor, WToken, collect_args,
+        macro_definition_span, normalize_args, push_arg_token, split_lines,
+    };
     use crate::alloc_prelude::*;
     use crate::include::MapIncludeResolver;
     use crate::preprocessor::{PreprocessResult, preprocess};
-    use stratum_arena::Interner;
-    use stratum_c_lexer::{PpToken, PpTokenKind, lex};
-    use stratum_diagnostics::{Diagnostic, FileId, SourceMap, Span};
+    use crate::util::spelling;
+    use stratum_arena::{Interner, Symbol};
+    use stratum_c_lexer::{PpToken, PpTokenKind, Punctuator, lex};
+    use stratum_diagnostics::{Diagnostic, FileId, Origin, SourceMap, Span};
 
     fn lex_tokens(src: &str, interner: &mut Interner) -> Vec<PpToken> {
         lex(src, FileId::from_raw(0), interner)
@@ -773,6 +911,7 @@ mod tests {
             diagnostics: Vec::new(),
             output: Vec::new(),
             conds: Vec::new(),
+            cond_bases: Vec::new(),
             depth: 0,
         }
     }
@@ -784,6 +923,127 @@ mod tests {
             diagnostics: vec![Diagnostic::error("bad")],
         };
         assert!(result.has_errors());
+
+        let result = PreprocessResult {
+            tokens: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn split_lines_keeps_final_line_without_newline() {
+        let span = Span::point(FileId::from_raw(0), 0);
+        let token = PpToken {
+            kind: PpTokenKind::Other('x'),
+            span,
+            leading_whitespace: false,
+            at_bol: true,
+        };
+
+        let lines = split_lines(&[token]);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.first(), Some(&vec![token]));
+    }
+
+    #[test]
+    fn synthesized_symbol_errors_are_reported() {
+        let mut map = SourceMap::new();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+        let mut pp = with_preprocessor(&mut interner, &mut map, &mut resolver);
+        let span = Span::point(FileId::from_raw(0), 0);
+
+        assert_eq!(
+            pp.synthesized_symbol(Err(stratum_arena::Error::InternerFull), span, "number"),
+            Symbol::default()
+        );
+        assert_eq!(pp.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn macro_definition_span_falls_back_to_definition_site_for_empty_bodies() {
+        let span = Span::point(FileId::from_raw(0), 3);
+        let def = MacroDef {
+            name: Symbol::default(),
+            params: None,
+            variadic: false,
+            body: Vec::new(),
+            span,
+        };
+
+        assert_eq!(macro_definition_span(&def), span);
+    }
+
+    #[test]
+    fn private_directive_and_condition_edges_are_covered_directly() {
+        fn token(kind: PpTokenKind, span: Span) -> PpToken {
+            PpToken {
+                kind,
+                span,
+                leading_whitespace: false,
+                at_bol: true,
+            }
+        }
+
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let unknown = interner.intern("unknown").unwrap();
+        let defined_name = interner.intern("DEFINED").unwrap();
+        let mut resolver = MapIncludeResolver::new();
+        let mut pp = with_preprocessor(&mut interner, &mut map, &mut resolver);
+        let span = Span::point(file, 0);
+
+        pp.directive(file, &[], span);
+        pp.directive(file, &[token(PpTokenKind::Identifier(unknown), span)], span);
+        pp.do_define(&[token(PpTokenKind::Number(Symbol::default()), span)], span);
+        pp.do_ifdef(&[], span, true);
+        pp.do_endif(span);
+        assert!(!pp.diagnostics.is_empty());
+
+        let ident = token(PpTokenKind::Identifier(defined_name), span);
+        assert_eq!(pp.match_defined(&[ident]), Some((0, 1)));
+        assert_eq!(
+            pp.match_defined(&[token(PpTokenKind::Punct(Punctuator::Plus), span)]),
+            None
+        );
+
+        pp.conds.clear();
+        pp.conds.push(Cond {
+            start: span,
+            taken: false,
+            done: false,
+            seen_else: false,
+        });
+        pp.do_if(&[], span);
+        assert!(!pp.conds.last().is_some_and(|cond| cond.taken));
+
+        pp.conds.clear();
+        pp.conds.push(Cond {
+            start: span,
+            taken: true,
+            done: true,
+            seen_else: false,
+        });
+        pp.do_elif(&[], span);
+        assert!(!pp.conds.last().is_some_and(|cond| cond.taken));
+
+        pp.conds.clear();
+        pp.conds.push(Cond {
+            start: span,
+            taken: true,
+            done: false,
+            seen_else: false,
+        });
+        pp.conds.push(Cond {
+            start: span,
+            taken: true,
+            done: false,
+            seen_else: false,
+        });
+        assert!(pp.parent_active());
     }
 
     #[test]
@@ -811,6 +1071,24 @@ mod tests {
     }
 
     #[test]
+    fn empty_and_inactive_directive_lines_are_ignored() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+
+        let result = preprocess(
+            file,
+            "\n#if 0\n# 123\n#unknown\n#endif\n",
+            &mut interner,
+            &mut map,
+            &mut resolver,
+        );
+
+        assert!(!result.has_errors());
+    }
+
+    #[test]
     fn inactive_parent_skips_nested_if_condition() {
         let mut map = SourceMap::new();
         let file = map.add_root("main.c", "").unwrap();
@@ -834,10 +1112,26 @@ mod tests {
         let mut resolver = MapIncludeResolver::new();
         let pp = with_preprocessor(&mut interner, &mut map, &mut resolver);
         let malformed_parenthesized = lex_tokens("(FOO + 1)", pp.interner);
+        let missing_name = lex_tokens("(", pp.interner);
+        let missing_close = lex_tokens("(FOO", pp.interner);
         let leading_punctuator = lex_tokens("+ 1", pp.interner);
 
         assert_eq!(pp.match_defined(&malformed_parenthesized), None);
+        assert_eq!(pp.match_defined(&missing_name), None);
+        assert_eq!(pp.match_defined(&missing_close), None);
         assert_eq!(pp.match_defined(&leading_punctuator), None);
+    }
+
+    #[test]
+    fn missing_include_target_reports_error() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+
+        let result = preprocess(file, "#include\n", &mut interner, &mut map, &mut resolver);
+
+        assert!(result.has_errors());
     }
 
     #[test]
@@ -875,6 +1169,183 @@ mod tests {
             &mut resolver,
         );
         assert!(result.has_errors());
+    }
+
+    #[test]
+    fn zero_argument_function_macro_invokes_successfully() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+
+        let result = preprocess(
+            file,
+            "#define F() x\nF()\n",
+            &mut interner,
+            &mut map,
+            &mut resolver,
+        );
+
+        assert!(!result.has_errors());
+        assert!(result.tokens.iter().any(|tok| {
+            matches!(tok.kind, PpTokenKind::Identifier(sym) if interner.resolve(sym).unwrap_or("") == "x")
+        }));
+    }
+
+    #[test]
+    fn successful_conditionals_defined_and_include_paths_expand() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new().with_file("hdr.h", "int from_header;\n");
+
+        let result = preprocess(
+            file,
+            "#define FOO 1\n\
+             #if 0\n\
+             skipped\n\
+             #elif defined(FOO)\n\
+             selected\n\
+             #else\n\
+             skipped_else\n\
+             #endif\n\
+             #ifndef MISSING\n\
+             missing_branch\n\
+             #endif\n\
+             #include \"hdr.h\"\n\
+             #line 99\n\
+             #pragma once\n",
+            &mut interner,
+            &mut map,
+            &mut resolver,
+        );
+
+        assert!(!result.has_errors());
+        let words: Vec<_> = result
+            .tokens
+            .iter()
+            .map(|tok| spelling(tok, &interner))
+            .collect();
+        assert!(words.contains(&"selected".to_string()), "got: {words:?}");
+        assert!(
+            words.contains(&"missing_branch".to_string()),
+            "got: {words:?}"
+        );
+        assert!(words.contains(&"from_header".to_string()), "got: {words:?}");
+    }
+
+    #[test]
+    fn nested_include_runs_and_unwinds_depth() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new()
+            .with_file("outer.h", "#include \"inner.h\"\n")
+            .with_file("inner.h", "int nested;\n");
+
+        let result = preprocess(
+            file,
+            "#include \"outer.h\"\n",
+            &mut interner,
+            &mut map,
+            &mut resolver,
+        );
+
+        assert!(!result.has_errors());
+        assert!(result.tokens.iter().any(|tok| {
+            matches!(tok.kind, PpTokenKind::Identifier(sym) if interner.resolve(sym).unwrap_or("") == "nested")
+        }));
+    }
+
+    #[test]
+    fn macro_expansion_tokens_record_expansion_origin() {
+        let src = "#define A 1\nA\n";
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", src).unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+
+        let result = preprocess(file, src, &mut interner, &mut map, &mut resolver);
+
+        assert!(!result.has_errors());
+        let expansion_origin = result.tokens.first().and_then(|token| {
+            map.file(token.span.file())
+                .map(stratum_diagnostics::SourceFile::origin)
+        });
+        assert!(matches!(
+            expansion_origin,
+            Some(Origin::Expansion {
+                call_site,
+                definition,
+            }) if call_site.file() == file && definition.file() == file
+        ));
+    }
+
+    #[test]
+    fn macro_stringize_paste_plain_name_and_arity_paths_expand() {
+        let mut map = SourceMap::new();
+        let file = map.add_root("main.c", "").unwrap();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+
+        let result = preprocess(
+            file,
+            "#define OBJ value\n\
+             #define CAT(a, b) a ## b\n\
+             #define STR(x) #x\n\
+             #define F(x) x\n\
+             OBJ\n\
+             CAT(to, ken)\n\
+             STR(a b)\n\
+             F\n\
+             F(1, 2)\n",
+            &mut interner,
+            &mut map,
+            &mut resolver,
+        );
+
+        assert!(result.has_errors());
+        let words: Vec<_> = result
+            .tokens
+            .iter()
+            .map(|tok| spelling(tok, &interner))
+            .collect();
+        assert!(words.contains(&"value".to_string()), "got: {words:?}");
+        assert!(words.contains(&"token".to_string()), "got: {words:?}");
+        assert!(words.contains(&"\"a b\"".to_string()), "got: {words:?}");
+        assert!(words.contains(&"F".to_string()), "got: {words:?}");
+    }
+
+    #[test]
+    fn direct_stringize_substitution_pushes_created_token() {
+        let mut map = SourceMap::new();
+        let mut interner = Interner::new();
+        let mut resolver = MapIncludeResolver::new();
+        let mut pp = with_preprocessor(&mut interner, &mut map, &mut resolver);
+        let span = Span::point(FileId::from_raw(0), 0);
+        let name = pp.interner.intern("x").unwrap();
+        let def = MacroDef {
+            name: pp.interner.intern("STR").unwrap(),
+            params: Some(vec![name]),
+            variadic: false,
+            body: lex_tokens("#x", pp.interner),
+            span,
+        };
+        let args = vec![
+            lex_tokens("a b", pp.interner)
+                .into_iter()
+                .map(WToken::bare)
+                .collect(),
+        ];
+
+        let out = pp.subst(&def, &args, &stratum_utils::HashSet::default());
+
+        assert_eq!(out.len(), 1);
+        let strings = out
+            .iter()
+            .filter(|tok| matches!(tok.tok.kind, PpTokenKind::StringLit(_)))
+            .count();
+        assert_eq!(strings, 1);
     }
 
     #[test]
@@ -925,6 +1396,55 @@ mod tests {
         let mut os = vec![newline.clone()];
         pp.paste(&mut os, vec![newline], span);
         assert!(!pp.diagnostics.is_empty());
+
+        let mut os: Vec<_> = lex_tokens("x", pp.interner)
+            .into_iter()
+            .map(WToken::bare)
+            .collect();
+        let rhs: Vec<_> = lex_tokens("+", pp.interner)
+            .into_iter()
+            .map(WToken::bare)
+            .collect();
+        let before = pp.diagnostics.len();
+        pp.paste(&mut os, rhs, span);
+        assert!(pp.diagnostics.len() > before);
+
+        let before = pp.diagnostics.len();
+        assert!(pp.relex("@", span).is_none());
+        assert!(pp.diagnostics.len() > before);
+
+        let before = pp.diagnostics.len();
+        assert!(pp.relex("\"unterminated", span).is_none());
+        assert!(pp.diagnostics.len() > before);
+    }
+
+    #[test]
+    fn collect_args_handles_empty_missing_nested_and_plain_tokens() {
+        let mut empty = VecDeque::new();
+        assert!(collect_args(&mut empty).is_none());
+
+        let mut interner = Interner::new();
+        let mut missing_close: VecDeque<_> = lex_tokens("(a", &mut interner)
+            .into_iter()
+            .map(WToken::bare)
+            .collect();
+        assert!(collect_args(&mut missing_close).is_none());
+
+        let mut nested: VecDeque<_> = lex_tokens("(a, (b, c))", &mut interner)
+            .into_iter()
+            .map(WToken::bare)
+            .collect();
+        let (args, _) = collect_args(&mut nested).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args.get(1).map(Vec::len), Some(5));
+
+        let token = WToken::bare(PpToken {
+            kind: PpTokenKind::Other('x'),
+            span: Span::point(FileId::from_raw(0), 0),
+            leading_whitespace: false,
+            at_bol: false,
+        });
+        push_arg_token(&mut [], token);
     }
 
     #[test]

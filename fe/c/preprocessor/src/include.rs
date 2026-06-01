@@ -140,14 +140,21 @@ mod tests {
     use crate::alloc_prelude::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn fixture_dir() -> PathBuf {
         let mut path = std::env::temp_dir();
+        let counter = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("stratum-include-{}-{unique}", std::process::id()));
+        path.push(format!(
+            "stratum-include-{}-{counter}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).unwrap();
         path
     }
@@ -188,7 +195,7 @@ mod tests {
             .unwrap();
         assert_eq!(found.contents, "int local;");
 
-        fs::remove_dir_all(dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -203,7 +210,7 @@ mod tests {
         assert_eq!(found.contents, "int system;");
         assert!(resolver.resolve("missing.h", true, None).is_none());
 
-        fs::remove_dir_all(dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -224,6 +231,6 @@ mod tests {
             .unwrap();
         assert_eq!(found.contents, "int fallback;");
 
-        fs::remove_dir_all(root).unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 }

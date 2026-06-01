@@ -5,6 +5,7 @@ pub enum Error {
     Arena(stratum_arena::Error),
     Ast(stratum_c_ast::Error),
     Hir(stratum_hir::Error),
+    LoweringDiagnostics,
     UnexpectedAstNode(&'static str),
     UnexpectedHirNode(&'static str),
 }
@@ -15,6 +16,12 @@ impl fmt::Display for Error {
             Self::Arena(err) => write!(f, "{err}"),
             Self::Ast(err) => write!(f, "{err}"),
             Self::Hir(err) => write!(f, "{err}"),
+            Self::LoweringDiagnostics => {
+                write!(
+                    f,
+                    "lowering produced diagnostics that cannot cross HirBridge"
+                )
+            }
             Self::UnexpectedAstNode(context) => {
                 write!(f, "unexpected AST node while lowering {context}")
             }
@@ -31,7 +38,9 @@ impl core::error::Error for Error {
             Self::Arena(err) => Some(err),
             Self::Ast(err) => Some(err),
             Self::Hir(err) => Some(err),
-            Self::UnexpectedAstNode(_) | Self::UnexpectedHirNode(_) => None,
+            Self::LoweringDiagnostics | Self::UnexpectedAstNode(_) | Self::UnexpectedHirNode(_) => {
+                None
+            }
         }
     }
 }
@@ -68,6 +77,7 @@ mod tests {
             Error::from(stratum_arena::Error::ArenaFull),
             Error::from(stratum_c_ast::Error::InconsistentNodeStorage),
             Error::from(stratum_hir::Error::from(stratum_arena::Error::ArenaFull)),
+            Error::LoweringDiagnostics,
             Error::UnexpectedAstNode("unit test"),
             Error::UnexpectedHirNode("unit test"),
         ];
@@ -76,7 +86,9 @@ mod tests {
             assert!(!err.to_string().is_empty());
             if matches!(
                 err,
-                Error::UnexpectedAstNode(_) | Error::UnexpectedHirNode(_)
+                Error::LoweringDiagnostics
+                    | Error::UnexpectedAstNode(_)
+                    | Error::UnexpectedHirNode(_)
             ) {
                 assert!(err.source().is_none());
             } else {

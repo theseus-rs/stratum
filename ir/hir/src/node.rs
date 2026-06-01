@@ -2,10 +2,9 @@
 //!
 //! The HIR is rich enough to represent the currently modeled C core faithfully: control flow
 //! keeps its original `while`/`do`/`for`/`switch` shapes, expressions retain casts,
-//! `sizeof`, member access, subscripting, the conditional and comma operators, compound
-//! assignment, and pre/post increment, and declarations carry storage classes, qualifiers,
-//! aggregates, enumerations, and `typedef`s. Some newer dialect constructs reuse existing HIR
-//! forms until their full semantics are modeled.
+//! `sizeof`, `alignof`, member access, subscripting, the conditional and comma operators,
+//! compound assignment, pre/post increment, generic selections, and declarations carry storage
+//! classes, qualifiers, aggregates, enumerations, and `typedef`s.
 
 use crate::alloc_prelude::*;
 use crate::context::{HirNodeId, HirTypeId};
@@ -259,6 +258,15 @@ pub struct InitEntry {
     pub value: HirInit,
 }
 
+/// One `_Generic` association.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericAssociation {
+    /// The association type, or `None` for `default`.
+    pub ty: Option<HirTypeId>,
+    /// The expression selected when the association matches.
+    pub expr: HirNodeId,
+}
+
 /// A C99 designator selecting a sub-object within an aggregate initialiser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Designator {
@@ -482,6 +490,20 @@ pub enum HirNode {
     SizeofExpr(HirNodeId),
     /// `sizeof(type)`.
     SizeofType(HirTypeId),
+    /// `_Alignof expr` / C23 `alignof expr`.
+    AlignofExpr(HirNodeId),
+    /// `_Alignof(type)` / C23 `alignof(type)`.
+    AlignofType(HirTypeId),
+    /// A C11 `_Generic` selection. `selected` stores the matched association index when the
+    /// lowering pass could determine it.
+    GenericSelection {
+        /// The controlling expression.
+        controlling: HirNodeId,
+        /// Associations in source order.
+        associations: Vec<GenericAssociation>,
+        /// The matched association index, if known.
+        selected: Option<usize>,
+    },
     /// A compound literal `(ty){ init }`.
     CompoundLiteral {
         /// The literal's type.
@@ -493,6 +515,10 @@ pub enum HirNode {
     Name(Symbol),
     /// An integer literal.
     IntLiteral(i128),
+    /// A boolean literal.
+    BoolLiteral(bool),
+    /// A C23 `nullptr` literal.
+    Nullptr,
     /// A floating-point literal, stored as its interned textual form for determinism.
     FloatLiteral(Symbol),
     /// A string literal, interned.

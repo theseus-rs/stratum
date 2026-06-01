@@ -7,6 +7,7 @@
 
 use crate::alloc_prelude::*;
 use stratum_arena::Interner;
+use stratum_c_ast::{decode_char_literal, decode_string_literal, parse_integer};
 use stratum_c_lexer::{Dialect, Keyword, PpToken, PpTokenKind, Token, TokenKind};
 use stratum_diagnostics::{Diagnostic, FileId, Label, Span};
 
@@ -133,23 +134,6 @@ fn is_float_spelling(text: &str) -> bool {
     lower.contains('.') || lower.contains('e')
 }
 
-/// Parses an integer constant, returning its value and whether it is unsigned.
-fn parse_integer(text: &str) -> Option<(i128, bool)> {
-    let trimmed = text.trim_end_matches(['u', 'U', 'l', 'L']);
-    let unsigned = text.contains('u') || text.contains('U');
-    let value = if let Some(hex) = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-    {
-        i128::from_str_radix(hex, 16).ok()?
-    } else if trimmed.len() > 1 && trimmed.starts_with('0') {
-        i128::from_str_radix(trimmed.strip_prefix('0')?, 8).ok()?
-    } else {
-        trimmed.parse::<i128>().ok()?
-    };
-    Some((value, unsigned))
-}
-
 fn finalize_char(
     sym: stratum_arena::Symbol,
     token: PpToken,
@@ -157,7 +141,7 @@ fn finalize_char(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Token {
     let text = interner.resolve(sym).unwrap_or("");
-    let value = decode_char(text).unwrap_or_else(|| {
+    let value = decode_char_literal(text).unwrap_or_else(|| {
         diagnostics.push(
             Diagnostic::error("invalid character constant")
                 .with_label(Label::new(token.span, "here")),
@@ -168,42 +152,6 @@ fn finalize_char(
         kind: TokenKind::Char(value),
         span: token.span,
     }
-}
-
-/// Decodes a character constant such as `'A'` or `L'\n'` to its value.
-fn decode_char(text: &str) -> Option<u32> {
-    let inner = text.trim_start_matches(['L', 'u', 'U']);
-    let inner = inner.strip_prefix('\'')?.strip_suffix('\'')?;
-    let mut chars = inner.chars();
-    let first = chars.next()?;
-    if first == '\\' {
-        decode_escape(&mut chars)
-    } else {
-        Some(first as u32)
-    }
-}
-
-fn decode_escape(chars: &mut core::str::Chars<'_>) -> Option<u32> {
-    let escape = chars.next()?;
-    let value = match escape {
-        'n' => 10,
-        't' => 9,
-        'r' => 13,
-        '0' => 0,
-        '\\' => u32::from(b'\\'),
-        '\'' => u32::from(b'\''),
-        '"' => u32::from(b'"'),
-        'a' => 7,
-        'b' => 8,
-        'f' => 12,
-        'v' => 11,
-        'x' => {
-            let hex: String = chars.by_ref().collect();
-            u32::from_str_radix(&hex, 16).ok()?
-        }
-        other => other as u32,
-    };
-    Some(value)
 }
 
 /// finalizes a run of adjacent string literals, concatenating their decoded contents.
@@ -218,7 +166,7 @@ fn finalize_strings(tokens: &[PpToken], interner: &mut Interner) -> (Token, usiz
             break;
         };
         let raw = interner.resolve(sym).unwrap_or("").to_string();
-        contents.push_str(&decode_string(&raw));
+        contents.push_str(&decode_string_literal(&raw).unwrap_or_default());
         span = span.to(token.span);
         consumed += 1;
     }
@@ -232,34 +180,11 @@ fn finalize_strings(tokens: &[PpToken], interner: &mut Interner) -> (Token, usiz
     )
 }
 
-/// Decodes a string literal's contents, stripping the prefix/quotes and resolving escapes.
-fn decode_string(raw: &str) -> String {
-    let body = raw.trim_start_matches(['L', 'u', 'U', '8']);
-    let body = body
-        .strip_prefix('"')
-        .and_then(|b| b.strip_suffix('"'))
-        .unwrap_or(body);
-    let mut out = String::new();
-    let mut chars = body.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(value) = decode_escape(&mut chars)
-                && let Some(decoded) = char::from_u32(value)
-            {
-                out.push(decoded);
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_char, decode_string, finalize, finalize_strings, finalize_with_dialect,
-        parse_integer,
+        decode_char_literal, decode_string_literal, finalize, finalize_strings,
+        finalize_with_dialect, parse_integer,
     };
     use crate::alloc_prelude::*;
     use stratum_arena::Interner;
@@ -393,27 +318,33 @@ mod tests {
         assert_eq!(parse_integer("0XfU"), Some((15, true)));
         assert_eq!(parse_integer("077"), Some((63, false)));
         assert_eq!(parse_integer("09"), None);
-        assert_eq!(decode_char("bad"), None);
-        assert_eq!(decode_char("''"), None);
-        assert_eq!(decode_char("'\\'"), None);
-        assert_eq!(decode_char("'\\t'"), Some(9));
-        assert_eq!(decode_char("'\\r'"), Some(13));
-        assert_eq!(decode_char("'\\0'"), Some(0));
-        assert_eq!(decode_char("'\\\\'"), Some(u32::from(b'\\')));
-        assert_eq!(decode_char("'\\''"), Some(u32::from(b'\'')));
-        assert_eq!(decode_char("'\\\"'"), Some(u32::from(b'"')));
-        assert_eq!(decode_char("'\\a'"), Some(7));
-        assert_eq!(decode_char("'\\b'"), Some(8));
-        assert_eq!(decode_char("'\\f'"), Some(12));
-        assert_eq!(decode_char("'\\v'"), Some(11));
-        assert_eq!(decode_char("'\\x41'"), Some(65));
-        assert_eq!(decode_char("'\\z'"), Some(u32::from('z')));
+        assert_eq!(decode_char_literal("bad"), None);
+        assert_eq!(decode_char_literal("''"), None);
+        assert_eq!(decode_char_literal("'\\'"), None);
+        assert_eq!(decode_char_literal("'\\t'"), Some(9));
+        assert_eq!(decode_char_literal("'\\r'"), Some(13));
+        assert_eq!(decode_char_literal("'\\0'"), Some(0));
+        assert_eq!(decode_char_literal("'\\\\'"), Some(u32::from(b'\\')));
+        assert_eq!(decode_char_literal("'\\''"), Some(u32::from(b'\'')));
+        assert_eq!(decode_char_literal("'\\\"'"), Some(u32::from(b'"')));
+        assert_eq!(decode_char_literal("'\\a'"), Some(7));
+        assert_eq!(decode_char_literal("'\\b'"), Some(8));
+        assert_eq!(decode_char_literal("'\\f'"), Some(12));
+        assert_eq!(decode_char_literal("'\\v'"), Some(11));
+        assert_eq!(decode_char_literal("'\\x41'"), Some(65));
+        assert_eq!(decode_char_literal("'\\101'"), Some(65));
+        assert_eq!(decode_char_literal("'\\z'"), None);
     }
 
     #[test]
     fn string_helpers_decode_escapes_and_empty_runs() {
-        assert_eq!(decode_string("plain"), "plain");
-        assert_eq!(decode_string("\"a\\n\\x21\""), "a\n!");
+        assert_eq!(decode_string_literal("plain").as_deref(), Some("plain"));
+        assert_eq!(
+            decode_string_literal("\"a\\n\\x21\"").as_deref(),
+            Some("a\n!")
+        );
+        assert_eq!(decode_string_literal("\"\\x41Z\"").as_deref(), Some("AZ"));
+        assert_eq!(decode_string_literal("\"\\101\"").as_deref(), Some("A"));
 
         let mut interner = Interner::new();
         let (token, consumed) = finalize_strings(&[], &mut interner);

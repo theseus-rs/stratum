@@ -1,0 +1,21 @@
+[package]
+name = "stratum_object_driver"
+description = "Format sniffing and read/write orchestration across the Stratum binary codecs"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_oir.workspace = true
+stratum_elf.workspace = true
+stratum_macho.workspace = true
+stratum_pe.workspace = true
+stratum_wasm.workspace = true
+
+[lints]
+workspace = true

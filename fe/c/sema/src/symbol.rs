@@ -157,5 +157,6 @@ mod tests {
             ),
             None
         );
+        assert!(std::panic::catch_unwind(|| table.globals()).is_err());
     }
 }

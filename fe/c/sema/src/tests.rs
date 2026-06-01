@@ -37,91 +37,89 @@ fn symbol_kind(sema: &SemaResult, sym: Symbol) -> TestResult<SymbolKind> {
 }
 
 #[test]
-fn collects_global_variable() -> TestResult {
-    let ast = build("int x;")?;
+fn collects_global_variable() {
+    let ast = build("int x;").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
-    let sym = interned(&ast, "x")?;
-    assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::Variable);
-    Ok(())
+    let sym = interned(&ast, "x").unwrap();
+    assert_eq!(symbol_kind(&sema, sym).unwrap(), SymbolKind::Variable);
 }
 
 #[test]
-fn collects_typedef() -> TestResult {
-    let ast = build("typedef int myint;")?;
+fn collects_typedef() {
+    let ast = build("typedef int myint;").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
-    let sym = interned(&ast, "myint")?;
-    assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::Typedef);
-    Ok(())
+    let sym = interned(&ast, "myint").unwrap();
+    assert_eq!(symbol_kind(&sema, sym).unwrap(), SymbolKind::Typedef);
 }
 
 #[test]
-fn collects_function() -> TestResult {
-    let ast = build("int main(void) { return 0; }")?;
+fn collects_function() {
+    let ast = build("int main(void) { return 0; }").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
-    let sym = interned(&ast, "main")?;
-    assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::Function);
-    Ok(())
+    let sym = interned(&ast, "main").unwrap();
+    assert_eq!(symbol_kind(&sema, sym).unwrap(), SymbolKind::Function);
 }
 
 #[test]
-fn function_prototype_is_function() -> TestResult {
-    let ast = build("int f(int a);")?;
+fn function_prototype_is_function() {
+    let ast = build("int f(int a);").unwrap();
     let sema = analyze(&ast);
-    let sym = interned(&ast, "f")?;
-    assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::Function);
-    Ok(())
+    let sym = interned(&ast, "f").unwrap();
+    assert_eq!(symbol_kind(&sema, sym).unwrap(), SymbolKind::Function);
 }
 
 #[test]
-fn parameters_are_scoped_to_body() -> TestResult {
-    let ast = build("int f(int a) { return a; }")?;
+fn parameters_are_scoped_to_body() {
+    let ast = build("int f(int a) { return a; }").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
     // After analysis the function scope is popped, so the parameter is not visible globally.
-    let sym = interned(&ast, "a")?;
+    let sym = interned(&ast, "a").unwrap();
     assert!(sema.symbols.lookup(sym).is_none());
-    Ok(())
 }
 
 #[test]
-fn enum_constants_get_sequential_values() -> TestResult {
-    let ast = build("enum Color { Red, Green, Blue };")?;
+fn enum_constants_get_sequential_values() {
+    let ast = build("enum Color { Red, Green, Blue };").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
     for (name, expected) in [("Red", 0), ("Green", 1), ("Blue", 2)] {
-        let sym = interned(&ast, name)?;
-        assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::EnumConstant(expected));
+        let sym = interned(&ast, name).unwrap();
+        assert_eq!(
+            symbol_kind(&sema, sym).unwrap(),
+            SymbolKind::EnumConstant(expected)
+        );
     }
-    Ok(())
 }
 
 #[test]
-fn enum_explicit_value_resets_sequence() -> TestResult {
-    let ast = build("enum E { A = 5, B, C = 10, D };")?;
+fn enum_explicit_value_resets_sequence() {
+    let ast = build("enum E { A = 5, B, C = 10, D };").unwrap();
     let sema = analyze(&ast);
     for (name, expected) in [("A", 5), ("B", 6), ("C", 10), ("D", 11)] {
-        let sym = interned(&ast, name)?;
-        assert_eq!(symbol_kind(&sema, sym)?, SymbolKind::EnumConstant(expected));
+        let sym = interned(&ast, name).unwrap();
+        assert_eq!(
+            symbol_kind(&sema, sym).unwrap(),
+            SymbolKind::EnumConstant(expected)
+        );
     }
-    Ok(())
 }
 
 #[test]
-fn enum_non_literal_value_uses_sequence_fallback() -> TestResult {
-    let ast = build("enum E { A = 1 + 2, B };")?;
+fn enum_non_literal_value_uses_sequence_fallback() {
+    let ast = build("enum E { A = 1 + 2, B };").unwrap();
     let sema = analyze(&ast);
-    let a = interned(&ast, "A")?;
-    let b = interned(&ast, "B")?;
-    assert_eq!(symbol_kind(&sema, a)?, SymbolKind::EnumConstant(0));
-    assert_eq!(symbol_kind(&sema, b)?, SymbolKind::EnumConstant(1));
-    Ok(())
+    let a = interned(&ast, "A").unwrap();
+    let b = interned(&ast, "B").unwrap();
+    assert_eq!(symbol_kind(&sema, a).unwrap(), SymbolKind::EnumConstant(0));
+    assert_eq!(symbol_kind(&sema, b).unwrap(), SymbolKind::EnumConstant(1));
 }
 
 #[test]
-fn walks_control_flow_bodies_without_errors() -> TestResult {
+fn walks_control_flow_bodies_without_errors() {
     let ast = build(
         "
         void f(int x) {
@@ -133,33 +131,30 @@ fn walks_control_flow_bodies_without_errors() -> TestResult {
             for (int i = 0; x; x = x) { int body; }
         }
         ",
-    )?;
+    )
+    .unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
-    Ok(())
 }
 
 #[test]
-fn conflicting_redeclaration_is_reported() -> TestResult {
-    let ast = build("typedef int t; int t;")?;
+fn conflicting_redeclaration_is_reported() {
+    let ast = build("typedef int t; int t;").unwrap();
     let sema = analyze(&ast);
     assert!(sema.has_errors());
-    Ok(())
 }
 
 #[test]
-fn compatible_redeclaration_is_allowed() -> TestResult {
-    let ast = build("int f(int a); int f(int a) { return a; }")?;
+fn compatible_redeclaration_is_allowed() {
+    let ast = build("int f(int a); int f(int a) { return a; }").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
-    Ok(())
 }
 
 #[test]
-fn empty_translation_unit_is_clean() -> TestResult {
-    let ast = build("")?;
+fn empty_translation_unit_is_clean() {
+    let ast = build("").unwrap();
     let sema = analyze(&ast);
     assert!(!sema.has_errors());
     assert!(sema.symbols.globals().is_empty());
-    Ok(())
 }

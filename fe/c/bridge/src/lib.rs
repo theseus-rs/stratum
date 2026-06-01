@@ -29,5 +29,5 @@ mod ty;
 
 pub use bridge::CBridge;
 pub use error::{Error, Result};
-pub use lower::{LowerResult, lower};
+pub use lower::{CDataModel, LowerResult, lower, lower_with_data_model};
 pub use raise::raise;

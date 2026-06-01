@@ -18,9 +18,9 @@ github-attestations = true
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"
 # Whether to install an updater program
-install-updater = true
+install-updater = false
 # The installers to generate for each app
-installers = ["shell", "powershell", "homebrew", "msi"]
+installers = ["shell", "powershell", "homebrew"]
 # Post-announce jobs to run in CI
 post-announce-jobs = ["./release-post-announce"]
 # Which actions to run on pull requests

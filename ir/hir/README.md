@@ -13,15 +13,15 @@ Compared with a raw syntax tree the HIR drops concrete syntax and keywords, yet 
 
 - control flow keeps its original shapes `While`, `DoWhile`, `For`, `Conditional`,
   `Switch`/`Case`/`Default`, `Label`/`Goto`, `Break`/`Continue`/`Return`;
-- expressions retain casts, `sizeof`, member access (`.`/`->`), subscripting, the conditional
-  and comma operators, compound assignment, and pre/post increment;
+- expressions retain casts, `sizeof`, `alignof`, member access (`.`/`->`), subscripting, the
+  conditional and comma operators, compound assignment, pre/post increment, boolean constants,
+  `nullptr`, and C11 `_Generic` selections;
 - declarations carry storage classes, qualifiers, aggregates, enumerations, `typedef`s,
   bit-fields, and designated initializers and compound literals.
 
-The C frontend accepts dialects through C23. Some newer constructs currently reuse existing
-HIR shapes instead of having dedicated nodes: boolean constants and `nullptr` lower as integer
-literals, `_Alignof` / `alignof` reuse the `sizeof` nodes, and `_Generic` is lowered by the
-current bridge to a selected expression rather than a typed selection node.
+The C frontend accepts dialects through C23. Newer constructs that are not complete semantic
+models yet still keep their source facts: `_Generic` stores the controlling expression, every
+association, and the selected association index when lowering can determine it.
 
 It stays **high-level**: named bindings, lexical blocks, and high-level types survive, and
 symbol/type *resolution* is deliberately deferred; names appear as `HirNode::Name` and source
