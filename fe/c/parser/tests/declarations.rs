@@ -148,3 +148,21 @@ fn multiple_top_level_declarations() {
 fn pointer_to_pointer_to_const() {
     assert_ok("const int *const *p;");
 }
+
+#[test]
+fn optional_declaration_arms_parse_integration_path() {
+    assert_ok(
+        r#"
+        alignas(16) int aligned_expr;
+        alignas(int) int aligned_type;
+        typeof(1 + 2) expr_type;
+        typeof(int *) ptr_type;
+        typeof_unqual(int) plain_type;
+        struct Forward;
+        enum Implicit { A, B = 2 };
+        struct Fields { int a, b : 3; _Static_assert(1, "ok"); };
+        int * const ptr;
+        int unsized[];
+        "#,
+    );
+}

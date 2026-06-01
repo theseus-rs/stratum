@@ -10,11 +10,14 @@ impl Parser<'_> {
     /// Parses a full expression, including the comma operator.
     pub(crate) fn parse_expr(&mut self) -> PResult<CNodeId> {
         let mut lhs = self.parse_assignment()?;
-        while self.is_punct(Punctuator::Comma) {
+        loop {
+            if !self.is_punct(Punctuator::Comma) {
+                break;
+            }
             self.bump();
             let rhs = self.parse_assignment()?;
             let span = self.ast.span(lhs).to(self.ast.span(rhs));
-            lhs = self.ast.alloc(CNode::Comma { lhs, rhs }, span)?;
+            lhs = self.alloc_node(CNode::Comma { lhs, rhs }, span)?;
         }
         Ok(lhs)
     }
@@ -28,16 +31,14 @@ impl Parser<'_> {
         self.bump();
         let value = self.parse_assignment()?;
         let span = self.ast.span(lhs).to(self.ast.span(value));
-        self.ast
-            .alloc(
-                CNode::Assign {
-                    op,
-                    target: lhs,
-                    value,
-                },
-                span,
-            )
-            .map_err(Into::into)
+        self.alloc_node(
+            CNode::Assign {
+                op,
+                target: lhs,
+                value,
+            },
+            span,
+        )
     }
 
     /// Parses a conditional (`a ? b : c`) expression.
@@ -50,16 +51,14 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::Colon)?;
         let else_expr = self.parse_conditional()?;
         let span = self.ast.span(cond).to(self.ast.span(else_expr));
-        self.ast
-            .alloc(
-                CNode::Conditional {
-                    cond,
-                    then_expr,
-                    else_expr,
-                },
-                span,
-            )
-            .map_err(Into::into)
+        self.alloc_node(
+            CNode::Conditional {
+                cond,
+                then_expr,
+                else_expr,
+            },
+            span,
+        )
     }
 
     /// Parses binary operators at or above `min_prec` using precedence climbing.
@@ -72,7 +71,7 @@ impl Parser<'_> {
             self.bump();
             let rhs = self.parse_binary(prec + 1)?;
             let span = self.ast.span(lhs).to(self.ast.span(rhs));
-            lhs = self.ast.alloc(CNode::Binary { op, lhs, rhs }, span)?;
+            lhs = self.alloc_node(CNode::Binary { op, lhs, rhs }, span)?;
         }
         Ok(lhs)
     }
@@ -88,14 +87,12 @@ impl Parser<'_> {
                 self.require(Dialect::C99, "compound literal")?;
                 let init = self.parse_brace_initializer()?;
                 let span = start.to(self.ast.span(init));
-                let literal = self
-                    .ast
-                    .alloc(CNode::CompoundLiteral { type_name, init }, span);
-                return self.parse_postfix_continuation(literal?);
+                let literal = self.alloc_node(CNode::CompoundLiteral { type_name, init }, span)?;
+                return self.parse_postfix_continuation(literal);
             }
             let expr = self.parse_cast()?;
             let span = start.to(self.ast.span(expr));
-            return Ok(self.ast.alloc(CNode::Cast { type_name, expr }, span)?);
+            return self.alloc_node(CNode::Cast { type_name, expr }, span);
         }
         self.parse_unary()
     }
@@ -114,7 +111,7 @@ impl Parser<'_> {
             let start = self.bump().span;
             let operand = self.parse_cast()?;
             let span = start.to(self.ast.span(operand));
-            return Ok(self.ast.alloc(CNode::Unary { op, operand }, span)?);
+            return self.alloc_node(CNode::Unary { op, operand }, span);
         }
         match self.peek_kind() {
             TokenKind::Punct(Punctuator::PlusPlus) => self.parse_prefix_incr(UnaryOp::PreInc),
@@ -129,7 +126,7 @@ impl Parser<'_> {
         let start = self.bump().span;
         let operand = self.parse_unary()?;
         let span = start.to(self.ast.span(operand));
-        Ok(self.ast.alloc(CNode::Unary { op, operand }, span)?)
+        self.alloc_node(CNode::Unary { op, operand }, span)
     }
 
     fn parse_sizeof(&mut self) -> PResult<CNodeId> {
@@ -138,13 +135,11 @@ impl Parser<'_> {
             self.bump();
             let type_name = self.parse_type_name()?;
             let end = self.expect_punct(Punctuator::RParen)?;
-            return Ok(self
-                .ast
-                .alloc(CNode::SizeofType(type_name), start.to(end))?);
+            return self.alloc_node(CNode::SizeofType(type_name), start.to(end));
         }
         let operand = self.parse_unary()?;
         let span = start.to(self.ast.span(operand));
-        Ok(self.ast.alloc(CNode::SizeofExpr(operand), span)?)
+        self.alloc_node(CNode::SizeofExpr(operand), span)
     }
 
     fn parse_alignof(&mut self) -> PResult<CNodeId> {
@@ -162,14 +157,12 @@ impl Parser<'_> {
             self.bump();
             let type_name = self.parse_type_name()?;
             let end = self.expect_punct(Punctuator::RParen)?;
-            return Ok(self
-                .ast
-                .alloc(CNode::AlignofType(type_name), start.to(end))?);
+            return self.alloc_node(CNode::AlignofType(type_name), start.to(end));
         }
         self.require(Dialect::C23, "`alignof` expression operand")?;
         let operand = self.parse_unary()?;
         let span = start.to(self.ast.span(operand));
-        Ok(self.ast.alloc(CNode::AlignofExpr(operand), span)?)
+        self.alloc_node(CNode::AlignofExpr(operand), span)
     }
 
     fn parse_postfix(&mut self) -> PResult<CNodeId> {
@@ -187,12 +180,10 @@ impl Parser<'_> {
                 TokenKind::Punct(Punctuator::Dot) => self.parse_member(expr, false)?,
                 TokenKind::Punct(Punctuator::Arrow) => self.parse_member(expr, true)?,
                 TokenKind::Punct(Punctuator::PlusPlus) => {
-                    expr = self.parse_postfix_incr(expr, PostfixOp::PostInc)?;
-                    expr
+                    self.parse_postfix_incr(expr, PostfixOp::PostInc)?
                 }
                 TokenKind::Punct(Punctuator::MinusMinus) => {
-                    expr = self.parse_postfix_incr(expr, PostfixOp::PostDec)?;
-                    expr
+                    self.parse_postfix_incr(expr, PostfixOp::PostDec)?
                 }
                 _ => break,
             };
@@ -205,7 +196,7 @@ impl Parser<'_> {
         let index = self.parse_expr()?;
         let end = self.expect_punct(Punctuator::RBracket)?;
         let span = self.ast.span(base).to(end);
-        Ok(self.ast.alloc(CNode::Index { base, index }, span)?)
+        self.alloc_node(CNode::Index { base, index }, span)
     }
 
     fn parse_call(&mut self, callee: CNodeId) -> PResult<CNodeId> {
@@ -221,7 +212,7 @@ impl Parser<'_> {
         }
         let end = self.expect_punct(Punctuator::RParen)?;
         let span = self.ast.span(callee).to(end);
-        Ok(self.ast.alloc(CNode::Call { callee, args }, span)?)
+        self.alloc_node(CNode::Call { callee, args }, span)
     }
 
     fn parse_member(&mut self, base: CNodeId, arrow: bool) -> PResult<CNodeId> {
@@ -230,13 +221,13 @@ impl Parser<'_> {
             return Err(self.error("expected a member name"));
         };
         let span = self.ast.span(base).to(self.peek().span);
-        Ok(self.ast.alloc(CNode::Member { base, field, arrow }, span)?)
+        self.alloc_node(CNode::Member { base, field, arrow }, span)
     }
 
     fn parse_postfix_incr(&mut self, operand: CNodeId, op: PostfixOp) -> PResult<CNodeId> {
         let end = self.bump().span;
         let span = self.ast.span(operand).to(end);
-        Ok(self.ast.alloc(CNode::Postfix { op, operand }, span)?)
+        self.alloc_node(CNode::Postfix { op, operand }, span)
     }
 
     fn parse_primary(&mut self) -> PResult<CNodeId> {
@@ -244,28 +235,28 @@ impl Parser<'_> {
         match token.kind {
             TokenKind::Identifier(sym) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::Ident(sym), token.span)?)
+                self.alloc_node(CNode::Ident(sym), token.span)
             }
             TokenKind::Integer { .. } | TokenKind::Char(_) => self.parse_int_like(),
             TokenKind::Float(sym) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::FloatLiteral(sym), token.span)?)
+                self.alloc_node(CNode::FloatLiteral(sym), token.span)
             }
             TokenKind::String(sym) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::StringLiteral(sym), token.span)?)
+                self.alloc_node(CNode::StringLiteral(sym), token.span)
             }
             TokenKind::Keyword(Keyword::True) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::BoolLiteral(true), token.span)?)
+                self.alloc_node(CNode::BoolLiteral(true), token.span)
             }
             TokenKind::Keyword(Keyword::False) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::BoolLiteral(false), token.span)?)
+                self.alloc_node(CNode::BoolLiteral(false), token.span)
             }
             TokenKind::Keyword(Keyword::Nullptr) => {
                 self.bump();
-                Ok(self.ast.alloc(CNode::Nullptr, token.span)?)
+                self.alloc_node(CNode::Nullptr, token.span)
             }
             TokenKind::Keyword(Keyword::Generic) => self.parse_generic_selection(),
             TokenKind::Punct(Punctuator::LParen) => {
@@ -286,12 +277,12 @@ impl Parser<'_> {
             TokenKind::Char(value) => value.to_string(),
             _ => return Err(self.error_at(token.span, "expected an integer or character literal")),
         };
-        let sym = self.ast.intern(&text)?;
+        let sym = self.intern_ast(&text)?;
         let node = match token.kind {
             TokenKind::Char(_) => CNode::CharLiteral(sym),
             _ => CNode::IntLiteral(sym),
         };
-        Ok(self.ast.alloc(node, token.span)?)
+        self.alloc_node(node, token.span)
     }
 
     fn parse_generic_selection(&mut self) -> PResult<CNodeId> {
@@ -312,7 +303,7 @@ impl Parser<'_> {
             controlling,
             associations,
         };
-        Ok(self.ast.alloc(node, start.to(end))?)
+        self.alloc_node(node, start.to(end))
     }
 
     fn parse_generic_association(&mut self) -> PResult<GenericAssociation> {

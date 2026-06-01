@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "bitflags"
+version = "2.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,8 +112,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "stratum_codeview"
+version = "0.1.0"
+dependencies = [
+ "stratum_diagnostics",
+ "stratum_oir",
+ "stratum_pe",
+]
+
+[[package]]
 name = "stratum_diagnostics"
 version = "0.1.0"
+
+[[package]]
+name = "stratum_dwarf"
+version = "0.1.0"
+dependencies = [
+ "stratum_diagnostics",
+ "stratum_oir",
+]
+
+[[package]]
+name = "stratum_elf"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "stratum_oir",
+]
 
 [[package]]
 name = "stratum_hir"
@@ -118,9 +149,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "stratum_macho"
+version = "0.1.0"
+dependencies = [
+ "stratum_oir",
+]
+
+[[package]]
+name = "stratum_object_driver"
+version = "0.1.0"
+dependencies = [
+ "stratum_elf",
+ "stratum_macho",
+ "stratum_oir",
+ "stratum_pe",
+ "stratum_wasm",
+]
+
+[[package]]
+name = "stratum_oir"
+version = "0.1.0"
+dependencies = [
+ "stratum_arena",
+ "stratum_diagnostics",
+]
+
+[[package]]
+name = "stratum_pe"
+version = "0.1.0"
+dependencies = [
+ "stratum_oir",
+]
+
+[[package]]
 name = "stratum_utils"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
  "rustc-hash",
+]
+
+[[package]]
+name = "stratum_wasm"
+version = "0.1.0"
+dependencies = [
+ "stratum_oir",
 ]

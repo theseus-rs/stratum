@@ -1,0 +1,18 @@
+[package]
+name = "stratum_dwarf"
+description = "DWARF line-program codec surfacing machine addresses to and from source spans"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_oir.workspace = true
+stratum_diagnostics.workspace = true
+
+[lints]
+workspace = true

@@ -160,10 +160,10 @@ impl<'a> CLowering<'a> {
         };
         let name = self.lower_symbol(cx, name)?;
         let ty = self.lower_type(cx, specifiers, &init.declarator.derivations)?;
-        out.push(
-            cx.alloc(HirNode::TypeAlias { name, ty }, span)
-                .map_err(crate::error::Error::from)?,
-        );
+        let alias = cx
+            .alloc(HirNode::TypeAlias { name, ty }, span)
+            .map_err(crate::error::Error::from)?;
+        out.push(alias);
         Ok(())
     }
 
@@ -185,8 +185,8 @@ impl<'a> CLowering<'a> {
             Some(e) => Some(self.lower_init(cx, e)?),
             None => None,
         };
-        out.push(
-            cx.alloc(
+        let var = cx
+            .alloc(
                 HirNode::Var {
                     name,
                     ty,
@@ -195,8 +195,8 @@ impl<'a> CLowering<'a> {
                 },
                 span,
             )
-            .map_err(crate::error::Error::from)?,
-        );
+            .map_err(crate::error::Error::from)?;
+        out.push(var);
         Ok(())
     }
 
@@ -261,8 +261,8 @@ impl<'a> CLowering<'a> {
                 bit_width,
             });
         }
-        out.push(
-            cx.alloc(
+        let record = cx
+            .alloc(
                 HirNode::Record {
                     kind,
                     tag,
@@ -270,8 +270,8 @@ impl<'a> CLowering<'a> {
                 },
                 span,
             )
-            .map_err(crate::error::Error::from)?,
-        );
+            .map_err(crate::error::Error::from)?;
+        out.push(record);
         Ok(())
     }
 
@@ -296,10 +296,10 @@ impl<'a> CLowering<'a> {
             };
             variants.push(EnumVariant { name, value });
         }
-        out.push(
-            cx.alloc(HirNode::Enumeration { tag, variants }, span)
-                .map_err(crate::error::Error::from)?,
-        );
+        let enumeration = cx
+            .alloc(HirNode::Enumeration { tag, variants }, span)
+            .map_err(crate::error::Error::from)?;
+        out.push(enumeration);
         Ok(())
     }
 
@@ -420,15 +420,19 @@ impl<'a> CLowering<'a> {
     /// Builds the HIR declaration flags (storage class plus `inline`) from C specifiers,
     /// ignoring `typedef`, which is handled by a dedicated lowering path.
     fn decl_flags(specifiers: &DeclSpecifiers) -> DeclFlags {
-        let storage = specifiers.storage.iter().find_map(|s| match s {
-            StorageClass::Extern => Some(HirStorage::Extern),
-            StorageClass::Static => Some(HirStorage::Static),
-            StorageClass::Auto => Some(HirStorage::Auto),
-            StorageClass::Register => Some(HirStorage::Register),
-            StorageClass::ThreadLocal => Some(HirStorage::ThreadLocal),
-            StorageClass::Constexpr => Some(HirStorage::Constexpr),
-            StorageClass::Typedef => None,
-        });
+        let mut storage = None;
+        for class in &specifiers.storage {
+            storage = match class {
+                StorageClass::Extern => Some(HirStorage::Extern),
+                StorageClass::Static => Some(HirStorage::Static),
+                StorageClass::Auto => Some(HirStorage::Auto),
+                StorageClass::Register => Some(HirStorage::Register),
+                StorageClass::ThreadLocal => Some(HirStorage::ThreadLocal),
+                StorageClass::Constexpr => Some(HirStorage::Constexpr),
+                StorageClass::Typedef => continue,
+            };
+            break;
+        }
         DeclFlags {
             storage,
             inline: specifiers.inline,
@@ -466,15 +470,15 @@ pub(crate) fn is_function_declarator(declarator: &Declarator) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CLowering, lower};
+    use super::{CLowering, LowerResult, lower};
     use crate::alloc_prelude::*;
     use crate::bridge::CBridge;
     use crate::test_utils::{build, dump};
     use stratum_c_ast::{
         CAst, CNode, DeclSpecifiers, Declarator, InitDeclarator, StorageClass, TypeSpecifier,
     };
-    use stratum_diagnostics::{FileId, Span};
-    use stratum_hir::{HirBridge, HirContext, HirNode};
+    use stratum_diagnostics::{Diagnostic, FileId, Span};
+    use stratum_hir::{HirBridge, HirContext, HirNode, StorageClass as HirStorage};
 
     fn span() -> Span {
         Span::point(FileId::from_raw(0), 0)
@@ -514,6 +518,13 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_parameter_lowers_without_a_name() {
+        let out = dump("int f(int);");
+        assert!(out.contains("function f("), "got: {out}");
+        assert!(out.contains("i32) -> i32"), "got: {out}");
+    }
+
+    #[test]
     fn storage_class_and_inline_flags_are_preserved() {
         let out = dump(
             "static inline _Noreturn int f(void) { return 0; } \
@@ -532,6 +543,40 @@ mod tests {
         let out = dump("void f(void) { auto int a; register int r; }");
         assert!(out.contains("auto var a"), "got: {out}");
         assert!(out.contains("register var r"), "got: {out}");
+    }
+
+    #[test]
+    fn lower_result_and_decl_flags_cover_all_storage_arms() {
+        let result = LowerResult {
+            hir: HirContext::new(),
+            diagnostics: vec![Diagnostic::error("bad")],
+        };
+        assert!(result.has_errors());
+        let result = LowerResult {
+            hir: HirContext::new(),
+            diagnostics: Vec::new(),
+        };
+        assert!(!result.has_errors());
+
+        for (storage, expected) in [
+            (StorageClass::Extern, Some(HirStorage::Extern)),
+            (StorageClass::Static, Some(HirStorage::Static)),
+            (StorageClass::Auto, Some(HirStorage::Auto)),
+            (StorageClass::Register, Some(HirStorage::Register)),
+            (StorageClass::ThreadLocal, Some(HirStorage::ThreadLocal)),
+            (StorageClass::Constexpr, Some(HirStorage::Constexpr)),
+            (StorageClass::Typedef, None),
+        ] {
+            let flags = CLowering::decl_flags(&DeclSpecifiers {
+                storage: vec![storage],
+                inline: true,
+                noreturn: true,
+                ..DeclSpecifiers::default()
+            });
+            assert_eq!(flags.storage, expected);
+            assert!(flags.inline);
+            assert!(flags.noreturn);
+        }
     }
 
     #[test]

@@ -218,7 +218,7 @@ mod tests {
     use stratum_c_ast::{
         CAst, DeclSpecifiers, Declarator, Derivation, ParamDecl, TypeQualifier, TypeSpecifier,
     };
-    use stratum_hir::{HirContext, HirType, TagKind};
+    use stratum_hir::{HirContext, HirType, IntWidth, TagKind};
 
     fn int_specs() -> DeclSpecifiers {
         DeclSpecifiers {
@@ -333,6 +333,27 @@ mod tests {
             }
         ));
 
+        let struct_ty = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Struct {
+                        tag: Some(name),
+                        fields: None,
+                    }],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            hir.ty(struct_ty),
+            HirType::Tag {
+                kind: TagKind::Struct,
+                ..
+            }
+        ));
+
         let enum_ty = lowering
             .lower_type(
                 &mut hir,
@@ -386,8 +407,88 @@ mod tests {
 
     #[test]
     fn qualifier_conversion_covers_restrict() {
-        let quals = qualifiers_from(&[TypeQualifier::Restrict, TypeQualifier::Atomic]);
+        let quals = qualifiers_from(&[
+            TypeQualifier::Const,
+            TypeQualifier::Volatile,
+            TypeQualifier::Restrict,
+            TypeQualifier::Atomic,
+        ]);
+        assert!(quals.is_const);
+        assert!(quals.is_volatile);
         assert!(quals.is_restrict);
         assert!(quals.is_atomic);
+    }
+
+    #[test]
+    fn void_bool_and_float_base_types_lower() {
+        let ast = CAst::new();
+        let mut lowering = CLowering::new(&ast);
+        let mut hir = HirContext::new();
+
+        let void = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Void],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(hir.ty(void), &HirType::Void);
+
+        let bool_ty = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Bool],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(hir.ty(bool_ty), &HirType::Bool);
+
+        let double = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Double],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(hir.ty(double), &HirType::Float { bits: 64 });
+
+        let float = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Float],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(hir.ty(float), &HirType::Float { bits: 32 });
+
+        let signed_char = lowering
+            .lower_type(
+                &mut hir,
+                &DeclSpecifiers {
+                    type_specifiers: vec![TypeSpecifier::Char],
+                    ..DeclSpecifiers::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            hir.ty(signed_char),
+            &HirType::Int {
+                signed: true,
+                width: IntWidth::W8
+            }
+        );
     }
 }

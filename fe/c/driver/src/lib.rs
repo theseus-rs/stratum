@@ -228,24 +228,40 @@ pub fn compile_source_with_resolver_and_dialect<R: IncludeResolver>(
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 
     let pp = preprocess(file, source, &mut interner, &mut source_map, resolver);
+    let preprocessor_had_errors = pp.has_errors();
     diagnostics.extend(pp.diagnostics);
     if emit == Emit::PpTokens {
         let output = render::pp_tokens(&pp.tokens, &interner)?;
-        return Ok(finish(output, &diagnostics, &source_map));
+        return Ok(finish(
+            output,
+            &diagnostics,
+            &source_map,
+            preprocessor_had_errors,
+        ));
     }
 
     let finalized = finalize_with_dialect(&pp.tokens, &mut interner, dialect);
     diagnostics.extend(finalized.diagnostics);
     if emit == Emit::Tokens {
         let output = render_tokens(&finalized.tokens, &interner)?;
-        return Ok(finish(output, &diagnostics, &source_map));
+        return Ok(finish(
+            output,
+            &diagnostics,
+            &source_map,
+            preprocessor_had_errors,
+        ));
     }
 
     let parsed = parse_with_dialect(&finalized.tokens, interner, dialect)?;
     diagnostics.extend(parsed.diagnostics);
     if emit == Emit::Ast {
         let output = format!("{}\n", parsed.ast.dump_root());
-        return Ok(finish(output, &diagnostics, &source_map));
+        return Ok(finish(
+            output,
+            &diagnostics,
+            &source_map,
+            preprocessor_had_errors,
+        ));
     }
 
     let sema = stratum_c_sema::analyze(&parsed.ast);
@@ -254,16 +270,26 @@ pub fn compile_source_with_resolver_and_dialect<R: IncludeResolver>(
     let lowered = stratum_c_bridge::lower(&parsed.ast)?;
     diagnostics.extend(lowered.diagnostics);
     let output = lowered.hir.dump_root();
-    Ok(finish(output, &diagnostics, &source_map))
+    Ok(finish(
+        output,
+        &diagnostics,
+        &source_map,
+        preprocessor_had_errors,
+    ))
 }
 
-fn finish(output: String, diagnostics: &[Diagnostic], source_map: &SourceMap) -> CompileOutput {
-    let had_errors = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+fn finish(
+    output: String,
+    diagnostics: &[Diagnostic],
+    source_map: &SourceMap,
+    preprocessor_had_errors: bool,
+) -> CompileOutput {
+    let diagnostic_had_errors = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     let rendered: String = diagnostics.iter().map(|d| d.render(source_map)).collect();
     CompileOutput {
         output,
         diagnostics: rendered,
-        had_errors,
+        had_errors: preprocessor_had_errors || diagnostic_had_errors,
     }
 }
 
@@ -331,12 +357,12 @@ fn emit_run_result(result: Result<CompileOutput>) -> i32 {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::{
-        CompileOutput, Emit, Error, Options, compile_source, compile_source_with_resolver,
-        emit_run_result, parse_args, render_tokens, run,
+        CompileOutput, Emit, Error, Options, compile_source, compile_source_with_dialect,
+        compile_source_with_resolver, emit_run_result, parse_args, render_tokens, run,
     };
     use crate::alloc_prelude::*;
-    use std::path::PathBuf;
-    use stratum_arena::Interner;
+    use std::{fs, path::PathBuf};
+    use stratum_arena::{Interner, Symbol};
     use stratum_c_lexer::{Dialect, Punctuator, Token, TokenKind};
     use stratum_c_preprocessor::MapIncludeResolver;
     use stratum_diagnostics::{FileId, Span};
@@ -361,6 +387,20 @@ mod tests {
             options.include_dirs,
             vec![PathBuf::from("include"), PathBuf::from("more")]
         );
+
+        let pptokens = parse_args(&[
+            "--emit".to_string(),
+            "pptokens".to_string(),
+            "input.c".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(pptokens.emit, Emit::PpTokens);
+
+        let ast = parse_args(&["--emit=ast".to_string(), "input.c".to_string()]).unwrap();
+        assert_eq!(ast.emit, Emit::Ast);
+
+        let hir = parse_args(&["--emit=hir".to_string(), "input.c".to_string()]).unwrap();
+        assert_eq!(hir.emit, Emit::Hir);
     }
 
     #[test]
@@ -368,8 +408,10 @@ mod tests {
         let cases: &[&[&str]] = &[
             &["--help"],
             &["--emit"],
+            &["--emit", "bad"],
             &["--emit=bad"],
             &["--std"],
+            &["--std", "bad"],
             &["--std=bad"],
             &["-I"],
             &["--bad"],
@@ -398,6 +440,259 @@ mod tests {
         let output =
             compile_source_with_resolver("t.c", "int x = 1;\n", Emit::Ast, &mut resolver).unwrap();
         assert!(!output.had_errors);
+
+        let mut resolver = MapIncludeResolver::new();
+        let output =
+            compile_source_with_resolver("t.c", "int x = 1;\n", Emit::Tokens, &mut resolver)
+                .unwrap();
+        assert!(output.output.contains("ident x"));
+
+        let mut resolver = MapIncludeResolver::new();
+        let output =
+            compile_source_with_resolver("t.c", "int x = 1;\n", Emit::Hir, &mut resolver).unwrap();
+        assert!(output.output.contains("var x"));
+    }
+
+    #[test]
+    fn compile_source_exercises_c23_frontend_surface() {
+        let source = r"
+typedef int Int;
+struct P { int x; int y; };
+union U { int i; float f; };
+enum E { A = 1, B, C = 5 };
+
+int g(int x) { return x; }
+
+int f(struct P *p, struct P q, int *a, double d) {
+    int b = true;
+    void *np = nullptr;
+    int arr[4] = { [0] = 1, [3] = 9 };
+    struct P r = (struct P){ .x = 7, .y = 8 };
+    b = +b;
+    b = ~b;
+    b = !b;
+    ++b;
+    --b;
+    b++;
+    b--;
+    b = b * 2 / 3 % 4 + (b << 1) - (b >> 1);
+    b = (b < 1) + (b <= 2) + (b > 3) + (b >= 4) + (b == 5) + (b != 6);
+    b = (b & 7) ^ (b | 8);
+    b = (b && 1) || 0;
+    b += 1;
+    b -= 1;
+    b *= 2;
+    b /= 2;
+    b %= 2;
+    b <<= 1;
+    b >>= 1;
+    b &= 7;
+    b |= 8;
+    b ^= 9;
+    if (b) {
+        b = p->x + q.y + a[2] + r.x + arr[3];
+    } else {
+        b = (int)d;
+    }
+    switch (b) {
+    case 0:
+        break;
+    default:
+        goto done;
+    }
+    for (int i = 0; i < 3; i++) {
+        continue;
+    }
+    while (b) {
+        b--;
+    }
+    do {
+        b++;
+    } while (b < 10);
+done:
+    return g(b ? b : 1) + (b++, b) + _Generic(b, int: b, default: 0)
+        + sizeof(int) + sizeof b + alignof b + _Alignof(int);
+}
+";
+        let output =
+            compile_source_with_dialect("rich.c", source, Emit::Hir, &[], Dialect::C23).unwrap();
+        assert!(!output.had_errors, "{}", output.diagnostics);
+        assert!(output.output.contains("function f"));
+        assert!(output.output.contains("switch"));
+        assert!(output.output.contains("compound-literal"));
+    }
+
+    #[test]
+    fn compile_source_exercises_preprocessor_macro_directive_surface() {
+        let mut resolver = MapIncludeResolver::new().with_file("hdr.h", "int included;\n");
+        let source = r#"
+#
+#define X 1
+#define ADD(a, b) a + b
+#define STR(x) #x
+#define CAT(a, b) a ## b
+#define VA(a, ...) a + __VA_ARGS__
+#if defined X
+int ax = ADD(1, 2);
+#endif
+#undef X
+#ifndef X
+int CAT(ma, in) = VA(1, 2);
+const char *s = STR(hello);
+#endif
+#include "hdr.h"
+#line 99
+#pragma ignored
+#if 0
+#unknown skipped
+#else
+int live;
+#endif
+#error forced diagnostic
+"#;
+        let output =
+            compile_source_with_resolver("pp.c", source, Emit::PpTokens, &mut resolver).unwrap();
+        assert!(output.had_errors);
+        assert!(output.output.contains("ident included"));
+        assert!(output.output.contains("ident main"));
+        assert!(output.output.contains("string \"hello\""));
+
+        let mut include_dir = std::env::temp_dir();
+        include_dir.push(format!("stratum-c-driver-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&include_dir);
+        fs::create_dir(&include_dir).unwrap();
+        fs::write(include_dir.join("driver.h"), "int fs_header;\n").unwrap();
+
+        let fs_source = r"
+#
+#include <driver.h>
+#define ADD(a, b) a + b
+#define X 1
+#define ZERO() 0
+#define STR(x) #x
+#define HASH_TAIL(x) #
+#define HASH_PLUS(x) # + x
+#define CAT(a, b) a ## b
+#define VA(a, ...) a + __VA_ARGS__
+#if defined X
+int sum = ADD(1, 2);
+#elif 1
+int skipped;
+#else
+int skipped_else;
+#endif
+#undef X
+#ifndef X
+int z = ZERO();
+const char *s = STR(hello   world);
+HASH_TAIL(a)
+HASH_PLUS(a)
+int CAT(ma, in) = VA(1, 2);
+#endif
+#if 0
+#error skipped
+#else
+int live;
+#endif
+";
+        let output =
+            compile_source("pp-fs.c", fs_source, Emit::PpTokens, &[include_dir.clone()]).unwrap();
+        fs::remove_file(include_dir.join("driver.h")).unwrap();
+        fs::remove_dir(include_dir).unwrap();
+        assert!(!output.had_errors, "{}", output.diagnostics);
+        assert!(output.output.contains("ident fs_header"));
+        assert!(output.output.contains("ident main"));
+        assert!(output.output.contains("string \"hello world\""));
+        assert!(output.output.contains("punct #"));
+    }
+
+    #[test]
+    fn compile_source_exercises_preprocessor_condition_edges() {
+        let source = r"
+#define Z() 1
+#if Z()
+int z;
+#endif
+#if 0 || 1
+int a;
+#endif
+#if 1 | 2
+int b;
+#endif
+#if 3 ^ 1
+int c;
+#endif
+#if 3 & 1
+int d;
+#endif
+#if 1 == 1
+int e;
+#endif
+#if 1 != 2
+int f;
+#endif
+#if 1 < 2
+int g;
+#endif
+#if 1 <= 1
+int h;
+#endif
+#if 2 > 1
+int i;
+#endif
+#if 2 >= 1
+int j;
+#endif
+#if 1 << 2
+int k;
+#endif
+#if 4 >> 1
+int l;
+#endif
+#if 5 - 3
+int m;
+#endif
+#if 6 / 3
+int n;
+#endif
+#if 5 % 2
+int o;
+#endif
+#if !0
+int p;
+#endif
+#if ~0
+int q;
+#endif
+#if 0 ? 0 : 1
+int r;
+#endif
+#if '\t' == 9
+int tab_ok;
+#endif
+#if '\r' == 13
+int cr_ok;
+#endif
+#if '\\' == 92
+int slash_ok;
+#endif
+#if '\'' == 39
+int quote_ok;
+#endif
+";
+        let output = compile_source("cond.c", source, Emit::PpTokens, &[]).unwrap();
+        assert!(!output.had_errors, "{}", output.diagnostics);
+        assert!(output.output.contains("ident r"));
+        assert!(output.output.contains("ident tab_ok"));
+
+        for bad in [
+            "#if 1 2\n#endif\n",
+            "#if 1 ? 2\n#endif\n",
+            "#if 1 / 0\n#endif\n",
+        ] {
+            let output = compile_source("bad.c", bad, Emit::PpTokens, &[]).unwrap();
+            assert!(output.had_errors, "{bad}");
+        }
     }
 
     #[test]
@@ -453,6 +748,43 @@ mod tests {
         assert!(rendered.contains("string \"text\""));
         assert!(rendered.contains("punct ;"));
         assert!(rendered.contains("<eof>"));
+    }
+
+    #[test]
+    fn render_tokens_reports_unresolved_interned_spelling() {
+        let interner = Interner::new();
+        let span = Span::point(FileId::from_raw(0), 0);
+
+        assert!(
+            render_tokens(
+                &[Token {
+                    kind: TokenKind::Identifier(Symbol::default()),
+                    span,
+                }],
+                &interner
+            )
+            .is_err()
+        );
+        assert!(
+            render_tokens(
+                &[Token {
+                    kind: TokenKind::Float(Symbol::default()),
+                    span,
+                }],
+                &interner
+            )
+            .is_err()
+        );
+        assert!(
+            render_tokens(
+                &[Token {
+                    kind: TokenKind::String(Symbol::default()),
+                    span,
+                }],
+                &interner
+            )
+            .is_err()
+        );
     }
 
     #[test]

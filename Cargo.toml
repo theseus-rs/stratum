@@ -2,15 +2,21 @@
 default-members = [
     "arena",
     "diagnostics",
-    "hir",
+    "ir/hir",
+    "ir/oir",
     "fe/c/*",
+    "be/debug/*",
+    "be/object/*",
     "utils",
 ]
 members = [
     "arena",
     "diagnostics",
-    "hir",
+    "ir/hir",
+    "ir/oir",
     "fe/c/*",
+    "be/debug/*",
+    "be/object/*",
     "utils",
 ]
 resolver = "3"
@@ -26,6 +32,7 @@ rust-version = "1.95.0"
 version = "0.1.0"
 
 [workspace.dependencies]
+bitflags = { version = "2.13.0", default-features = false }
 hashbrown = { version = "0.17.1", default-features = false, features = ["allocator-api2"] }
 rustc-hash = { version = "2.1.2", default-features = false }
 stratum_arena = { path = "arena", version = "0.1.0" }
@@ -36,21 +43,32 @@ stratum_c_parser = { path = "fe/c/parser", version = "0.1.0" }
 stratum_c_preprocessor = { path = "fe/c/preprocessor", version = "0.1.0" }
 stratum_c_sema = { path = "fe/c/sema", version = "0.1.0" }
 stratum_diagnostics = { path = "diagnostics", version = "0.1.0" }
-stratum_hir = { path = "hir", version = "0.1.0" }
+stratum_elf = { path = "be/object/elf", version = "0.1.0" }
+stratum_hir = { path = "ir/hir", version = "0.1.0" }
+stratum_macho = { path = "be/object/macho", version = "0.1.0" }
+stratum_oir = { path = "ir/oir", version = "0.1.0" }
+stratum_pe = { path = "be/object/pe", version = "0.1.0" }
 stratum_utils = { path = "utils", version = "0.1.0" }
+stratum_wasm = { path = "be/object/wasm", version = "0.1.0" }
 
 [workspace.lints.rust]
 missing_debug_implementations = "deny"
 unsafe_code = "deny"
+unused_qualifications = "deny"
 warnings = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 allow_attributes = "deny"
+expect_used = "deny"
 fallible_impl_from = "deny"
 indexing_slicing = "deny"
 panic = "deny"
+panic_in_result_fn = "deny"
+todo = "deny"
 unreachable = "deny"
+unimplemented = "deny"
+unwrap_in_result = "deny"
 unwrap_used = "deny"
 
 [profile.release]

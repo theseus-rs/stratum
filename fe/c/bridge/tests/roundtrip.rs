@@ -14,11 +14,18 @@
 //! independently, which is exactly how the lowering produced them.
 
 use stratum_arena::Interner;
+use stratum_c_ast::{
+    CAst, CNode, DeclSpecifiers, Declarator, Derivation, InitItem, PostfixOp as CPostfixOp,
+    TypeSpecifier,
+};
 use stratum_c_bridge::{lower, raise};
 use stratum_c_lexer::lex;
 use stratum_c_parser::{finalize, parse};
-use stratum_diagnostics::SourceMap;
-use stratum_hir::HirContext;
+use stratum_diagnostics::{FileId, SourceMap, Span};
+use stratum_hir::{
+    BinaryOp, DeclFlags, EnumVariant, Field, HirContext, HirInit, HirNode, HirNodeId, HirType,
+    HirTypeId, IntWidth, Param, PostfixOp, Qualifiers, RecordKind, StorageClass,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -31,11 +38,13 @@ fn lower_source(src: &str) -> TestResult<HirContext> {
     let finalized = finalize(&lexed.tokens, &mut interner);
     let parsed = parse(&finalized.tokens, interner)?;
     let result = lower(&parsed.ast)?;
-    assert!(
-        !result.has_errors(),
-        "unexpected errors lowering {src:?}: {:#?}",
-        result.diagnostics
-    );
+    if result.has_errors() {
+        return Err(std::io::Error::other(format!(
+            "unexpected errors lowering {src:?}: {:#?}",
+            result.diagnostics
+        ))
+        .into());
+    }
     Ok(result.hir)
 }
 
@@ -46,11 +55,342 @@ fn assert_lossless(src: &str) -> TestResult {
     let emitted = raise(&first)?;
     let second = lower_source(&emitted)?;
     let dump2 = second.dump_root();
-    assert_eq!(
-        dump1, dump2,
-        "round-trip changed the HIR.\n--- source ---\n{src}\n--- emitted ---\n{emitted}\n\
-         --- dump1 ---\n{dump1}\n--- dump2 ---\n{dump2}"
-    );
+    if dump1 != dump2 {
+        return Err(std::io::Error::other(format!(
+            "round-trip changed the HIR.\n--- source ---\n{src}\n--- emitted ---\n{emitted}\n\
+             --- dump1 ---\n{dump1}\n--- dump2 ---\n{dump2}"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn ensure(condition: bool, message: impl Into<String>) -> TestResult {
+    if condition {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(message.into()).into())
+    }
+}
+
+fn require_contains(haystack: &str, needle: &str) -> TestResult {
+    ensure(
+        haystack.contains(needle),
+        format!("missing {needle:?} in {haystack}"),
+    )
+}
+
+fn synthetic_span() -> Span {
+    Span::point(FileId::from_raw(0), 0)
+}
+
+fn int_specifiers() -> DeclSpecifiers {
+    DeclSpecifiers {
+        type_specifiers: vec![TypeSpecifier::Int],
+        ..DeclSpecifiers::default()
+    }
+}
+
+#[test]
+fn synthetic_ast_edges_lower_in_roundtrip_binary() -> TestResult {
+    let mut ast = CAst::new();
+    let f = ast.intern("f")?;
+    let one = ast.intern("1")?;
+    let one = ast.alloc(CNode::IntLiteral(one), synthetic_span())?;
+    let init = ast.alloc(
+        CNode::InitList(vec![InitItem {
+            designators: Vec::new(),
+            value: one,
+        }]),
+        synthetic_span(),
+    )?;
+    let empty_init = ast.alloc(CNode::InitList(Vec::new()), synthetic_span())?;
+    let post_dec = ast.alloc(
+        CNode::Postfix {
+            op: CPostfixOp::PostDec,
+            operand: one,
+        },
+        synthetic_span(),
+    )?;
+    let fallback = ast.alloc(CNode::Break, synthetic_span())?;
+    let init_stmt = ast.alloc(CNode::ExprStmt(Some(init)), synthetic_span())?;
+    let empty_init_stmt = ast.alloc(CNode::ExprStmt(Some(empty_init)), synthetic_span())?;
+    let post_dec_stmt = ast.alloc(CNode::ExprStmt(Some(post_dec)), synthetic_span())?;
+    let fallback_stmt = ast.alloc(CNode::ExprStmt(Some(fallback)), synthetic_span())?;
+    let body = ast.alloc(
+        CNode::Compound(vec![
+            init_stmt,
+            empty_init_stmt,
+            post_dec_stmt,
+            fallback_stmt,
+        ]),
+        synthetic_span(),
+    )?;
+    let function = ast.alloc(
+        CNode::FunctionDef {
+            specifiers: int_specifiers(),
+            declarator: Declarator {
+                name: Some(f),
+                derivations: vec![Derivation::Function {
+                    params: Vec::new(),
+                    variadic: false,
+                }],
+            },
+            body,
+        },
+        synthetic_span(),
+    )?;
+    let root = ast.alloc(CNode::TranslationUnit(vec![function]), synthetic_span())?;
+    ast.set_root(root);
+
+    let result = lower(&ast)?;
+    ensure(!result.has_errors(), format!("{:#?}", result.diagnostics))?;
+    require_contains(&result.hir.dump_root(), "postfix `--`")?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RoundtripTypes {
+    int: HirTypeId,
+    ushort: HirTypeId,
+    qualified_int: HirTypeId,
+    qualified_ptr: HirTypeId,
+}
+
+fn roundtrip_synthetic_types(hir: &mut HirContext) -> TestResult<RoundtripTypes> {
+    let int = hir.alloc_type(HirType::Int {
+        signed: true,
+        width: IntWidth::W32,
+    })?;
+    let ushort = hir.alloc_type(HirType::Int {
+        signed: false,
+        width: IntWidth::W16,
+    })?;
+    let int_ptr = hir.alloc_type(HirType::Pointer(int))?;
+    let qualifiers = Qualifiers {
+        is_const: true,
+        is_volatile: true,
+        is_restrict: true,
+        is_atomic: true,
+    };
+    let qualified_int = hir.alloc_type(HirType::Qualified {
+        inner: int,
+        qualifiers,
+    })?;
+    let qualified_ptr = hir.alloc_type(HirType::Qualified {
+        inner: int_ptr,
+        qualifiers,
+    })?;
+    Ok(RoundtripTypes {
+        int,
+        ushort,
+        qualified_int,
+        qualified_ptr,
+    })
+}
+
+fn roundtrip_declaration_items(
+    hir: &mut HirContext,
+    types: RoundtripTypes,
+    name: stratum_arena::Symbol,
+    label: stratum_arena::Symbol,
+    one: HirNodeId,
+    sum: HirNodeId,
+) -> TestResult<Vec<HirNodeId>> {
+    let short_name = hir.intern("Short")?;
+    let typedef = hir.alloc(
+        HirNode::TypeAlias {
+            name: short_name,
+            ty: types.ushort,
+        },
+        synthetic_span(),
+    )?;
+    let record = hir.alloc(
+        HirNode::Record {
+            kind: RecordKind::Struct,
+            tag: None,
+            fields: vec![
+                Field {
+                    name: Some(name),
+                    ty: types.int,
+                    bit_width: None,
+                },
+                Field {
+                    name: None,
+                    ty: types.int,
+                    bit_width: Some(one),
+                },
+            ],
+        },
+        synthetic_span(),
+    )?;
+    let enum_tag = hir.intern("E")?;
+    let enumeration = hir.alloc(
+        HirNode::Enumeration {
+            tag: Some(enum_tag),
+            variants: vec![
+                EnumVariant {
+                    name,
+                    value: Some(one),
+                },
+                EnumVariant {
+                    name: label,
+                    value: None,
+                },
+            ],
+        },
+        synthetic_span(),
+    )?;
+    let local = hir.alloc(
+        HirNode::Var {
+            name,
+            ty: types.int,
+            flags: DeclFlags::default(),
+            init: Some(HirInit::Expr(sum)),
+        },
+        synthetic_span(),
+    )?;
+    Ok(vec![typedef, record, enumeration, local])
+}
+
+fn roundtrip_qualified_locals(
+    hir: &mut HirContext,
+    types: RoundtripTypes,
+) -> TestResult<Vec<HirNodeId>> {
+    let qualified_scalar_name = hir.intern("q")?;
+    let qualified_scalar_local = hir.alloc(
+        HirNode::Var {
+            name: qualified_scalar_name,
+            ty: types.qualified_int,
+            flags: DeclFlags::default(),
+            init: None,
+        },
+        synthetic_span(),
+    )?;
+    let qualified_pointer_name = hir.intern("qp")?;
+    let qualified_pointer_local = hir.alloc(
+        HirNode::Var {
+            name: qualified_pointer_name,
+            ty: types.qualified_ptr,
+            flags: DeclFlags::default(),
+            init: None,
+        },
+        synthetic_span(),
+    )?;
+    Ok(vec![qualified_scalar_local, qualified_pointer_local])
+}
+
+fn roundtrip_for_statements(
+    hir: &mut HirContext,
+    name: stratum_arena::Symbol,
+) -> TestResult<Vec<HirNodeId>> {
+    let name_expr = hir.alloc(HirNode::Name(name), synthetic_span())?;
+    let for_init = hir.alloc(HirNode::ExprStmt(Some(name_expr)), synthetic_span())?;
+    let for_step = hir.alloc(
+        HirNode::Postfix {
+            op: PostfixOp::Inc,
+            operand: name_expr,
+        },
+        synthetic_span(),
+    )?;
+    let continue_stmt = hir.alloc(HirNode::Continue, synthetic_span())?;
+    let for_body = hir.alloc(HirNode::Block(vec![continue_stmt]), synthetic_span())?;
+    let populated = hir.alloc(
+        HirNode::For {
+            init: Some(for_init),
+            cond: Some(name_expr),
+            step: Some(for_step),
+            body: for_body,
+        },
+        synthetic_span(),
+    )?;
+    let empty_for_body = hir.alloc(HirNode::Block(Vec::new()), synthetic_span())?;
+    let sparse = hir.alloc(
+        HirNode::For {
+            init: None,
+            cond: None,
+            step: None,
+            body: empty_for_body,
+        },
+        synthetic_span(),
+    )?;
+    Ok(vec![populated, sparse])
+}
+
+#[test]
+fn synthetic_hir_edges_raise_in_roundtrip_binary() -> TestResult {
+    let mut missing_root = HirContext::new();
+    ensure(
+        raise(&missing_root).is_err(),
+        "missing root raised successfully",
+    )?;
+    let bad_root = missing_root.alloc(HirNode::IntLiteral(0), synthetic_span())?;
+    missing_root.set_root(bad_root);
+    ensure(
+        raise(&missing_root).is_err(),
+        "non-module root raised successfully",
+    )?;
+
+    let mut hir = HirContext::new();
+    let types = roundtrip_synthetic_types(&mut hir)?;
+    let name = hir.intern("x")?;
+    let label = hir.intern("again")?;
+    let one = hir.alloc(HirNode::IntLiteral(1), synthetic_span())?;
+    let two = hir.alloc(HirNode::IntLiteral(2), synthetic_span())?;
+    let sum = hir.alloc(
+        HirNode::Binary {
+            op: BinaryOp::Add,
+            lhs: one,
+            rhs: two,
+        },
+        synthetic_span(),
+    )?;
+    let mut items = roundtrip_declaration_items(&mut hir, types, name, label, one, sum)?;
+    let local = *items
+        .get(3)
+        .ok_or_else(|| std::io::Error::other("missing synthetic local"))?;
+    items.extend(roundtrip_qualified_locals(&mut hir, types)?);
+    items.extend(roundtrip_for_statements(&mut hir, name)?);
+    let return_none = hir.alloc(HirNode::Return(None), synthetic_span())?;
+    let empty_stmt = hir.alloc(HirNode::ExprStmt(None), synthetic_span())?;
+    let label_stmt = hir.alloc(
+        HirNode::Label {
+            name: label,
+            body: local,
+        },
+        synthetic_span(),
+    )?;
+    let goto_stmt = hir.alloc(HirNode::Goto(label), synthetic_span())?;
+    items.extend([return_none, empty_stmt, label_stmt, goto_stmt]);
+    let body = hir.alloc(HirNode::Block(items), synthetic_span())?;
+    let function = hir.alloc(
+        HirNode::Function {
+            name,
+            params: vec![Param {
+                name: None,
+                ty: types.int,
+            }],
+            ret: types.int,
+            variadic: true,
+            flags: DeclFlags {
+                storage: Some(StorageClass::Static),
+                inline: true,
+                noreturn: true,
+            },
+            body: Some(body),
+        },
+        synthetic_span(),
+    )?;
+    let root = hir.alloc(HirNode::Module(vec![function]), synthetic_span())?;
+    hir.set_root(root);
+
+    let out = raise(&hir)?;
+    require_contains(&out, "static inline _Noreturn int x(int, ...)")?;
+    require_contains(&out, "typedef unsigned short Short;")?;
+    require_contains(&out, "enum E { x = 1, again };")?;
+    require_contains(&out, "const volatile restrict _Atomic int q;")?;
+    require_contains(&out, "*const volatile restrict _Atomic qp")?;
+    require_contains(&out, "for (")?;
     Ok(())
 }
 
@@ -87,7 +427,10 @@ fn nested_pointer_array_and_function_declarators() -> TestResult {
 
 #[test]
 fn storage_classes_and_inline() -> TestResult {
-    assert_lossless("static int a; extern int b; static inline int f(void) { return 0; }")
+    assert_lossless(
+        "static int a; extern int b; _Thread_local int t; constexpr int c = 1; \
+         static inline int f(void) { return 0; }",
+    )
 }
 
 #[test]
@@ -289,5 +632,29 @@ fn nested_and_compound_literals() -> TestResult {
         "struct P { int x; int y; }; \
          int grid[2][2] = { { 1, 2 }, { 3, 4 } }; \
          int f(void) { struct P q = (struct P){ .x = 7, .y = 8 }; return q.x; }",
+    )
+}
+
+#[test]
+fn rich_bridge_surface_round_trips() -> TestResult {
+    assert_lossless(
+        "typedef int Int; \
+         struct P { int x; int y; }; union U { int i; float f; }; enum E { A = 1, B, C = 5 }; \
+         static inline int g(int x) { return x; } \
+         int f(struct P *p, struct P q, int *a, double d) { \
+             int b = true; void *np = nullptr; int arr[4] = { [0] = 1, [3] = 9 }; \
+             struct P r = (struct P){ .x = 7, .y = 8 }; \
+             b = +b; b = ~b; b = !b; ++b; --b; b++; b--; \
+             b = b * 2 / 3 % 4 + (b << 1) - (b >> 1); \
+             b = (b < 1) + (b <= 2) + (b > 3) + (b >= 4) + (b == 5) + (b != 6); \
+             b = (b & 7) ^ (b | 8); b = (b && 1) || 0; \
+             b += 1; b -= 1; b *= 2; b /= 2; b %= 2; b <<= 1; b >>= 1; b &= 7; b |= 8; b ^= 9; \
+             if (b) { b = p->x + q.y + a[2] + r.x + arr[3]; } else { b = (int)d; } \
+             switch (b) { case 0: break; default: goto done; } \
+             for (int i = 0; i < 3; i++) { continue; } \
+             while (b) { b--; } do { b++; } while (b < 10); \
+         done: return g(b ? b : 1) + (b++, b) + sizeof(int) + sizeof b \
+             + alignof b + _Alignof(int) + _Generic(b, int: b, default: 0) + (int)np; \
+         }",
     )
 }

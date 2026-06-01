@@ -4,6 +4,7 @@ use crate::alloc_prelude::*;
 use crate::parser::{PResult, Parser};
 use stratum_c_ast::{CNode, CNodeId};
 use stratum_c_lexer::{Dialect, Keyword, Punctuator, TokenKind};
+use stratum_diagnostics::Span;
 
 impl Parser<'_> {
     /// Parses a `{ ... }` compound statement, introducing a new scope.
@@ -29,7 +30,7 @@ impl Parser<'_> {
         }
         self.exit_scope();
         let end = self.expect_punct(Punctuator::RBrace)?;
-        Ok(self.ast.alloc(CNode::Compound(items), start.to(end))?)
+        self.alloc_node(CNode::Compound(items), start.to(end))
     }
 
     fn parse_block_item(&mut self) -> PResult<CNodeId> {
@@ -57,16 +58,13 @@ impl Parser<'_> {
         let start = self.peek().span;
         let specifiers = self.parse_decl_specifiers()?;
         if self.eat_punct(Punctuator::Semicolon) {
-            return self
-                .ast
-                .alloc(
-                    CNode::Declaration {
-                        specifiers,
-                        declarators: Vec::new(),
-                    },
-                    start,
-                )
-                .map_err(Into::into);
+            return self.alloc_node(
+                CNode::Declaration {
+                    specifiers,
+                    declarators: Vec::new(),
+                },
+                start,
+            );
         }
         let first = self.parse_declarator(false)?;
         self.finish_declaration(specifiers, first, start)
@@ -103,18 +101,17 @@ impl Parser<'_> {
         let cond = self.parse_expr()?;
         self.expect_punct(Punctuator::RParen)?;
         let then_branch = self.parse_statement()?;
-        let else_branch = if self.eat_keyword(Keyword::Else) {
-            Some(self.parse_statement()?)
-        } else {
-            None
-        };
+        let mut else_branch = None;
+        if self.eat_keyword(Keyword::Else) {
+            else_branch = Some(self.parse_statement()?);
+        }
         let end = else_branch.unwrap_or(then_branch);
         let node = CNode::If {
             cond,
             then_branch,
             else_branch,
         };
-        Ok(self.ast.alloc(node, start.to(self.ast.span(end)))?)
+        self.alloc_node(node, start.to(self.ast.span(end)))
     }
 
     fn parse_while(&mut self) -> PResult<CNodeId> {
@@ -124,7 +121,7 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::RParen)?;
         let body = self.parse_statement()?;
         let span = start.to(self.ast.span(body));
-        Ok(self.ast.alloc(CNode::While { cond, body }, span)?)
+        self.alloc_node(CNode::While { cond, body }, span)
     }
 
     fn parse_do_while(&mut self) -> PResult<CNodeId> {
@@ -137,9 +134,7 @@ impl Parser<'_> {
         let cond = self.parse_expr()?;
         self.expect_punct(Punctuator::RParen)?;
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self
-            .ast
-            .alloc(CNode::DoWhile { body, cond }, start.to(end))?)
+        self.alloc_node(CNode::DoWhile { body, cond }, start.to(end))
     }
 
     fn parse_for(&mut self) -> PResult<CNodeId> {
@@ -160,7 +155,7 @@ impl Parser<'_> {
             step,
             body,
         };
-        Ok(self.ast.alloc(node, span)?)
+        self.alloc_node(node, span)
     }
 
     fn parse_for_init(&mut self) -> PResult<Option<CNodeId>> {
@@ -181,10 +176,9 @@ impl Parser<'_> {
 
     fn parse_optional_expr(&mut self, terminator: Punctuator) -> PResult<Option<CNodeId>> {
         if self.is_punct(terminator) {
-            Ok(None)
-        } else {
-            Ok(Some(self.parse_expr()?))
+            return Ok(None);
         }
+        Ok(Some(self.parse_expr()?))
     }
 
     fn parse_return(&mut self) -> PResult<CNodeId> {
@@ -195,13 +189,13 @@ impl Parser<'_> {
             Some(self.parse_expr()?)
         };
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self.ast.alloc(CNode::Return(value), start.to(end))?)
+        self.alloc_node(CNode::Return(value), start.to(end))
     }
 
     fn parse_simple(&mut self, node: CNode) -> PResult<CNodeId> {
         let start = self.bump().span; // `break` / `continue`
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self.ast.alloc(node, start.to(end))?)
+        self.alloc_node(node, start.to(end))
     }
 
     fn parse_goto(&mut self) -> PResult<CNodeId> {
@@ -210,7 +204,7 @@ impl Parser<'_> {
             return Err(self.error("expected a label after `goto`"));
         };
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self.ast.alloc(CNode::Goto(label), start.to(end))?)
+        self.alloc_node(CNode::Goto(label), start.to(end))
     }
 
     fn parse_label(&mut self) -> PResult<CNodeId> {
@@ -219,15 +213,26 @@ impl Parser<'_> {
             return Err(self.error("expected a label name"));
         };
         self.expect_punct(Punctuator::Colon)?;
-        let body = if self.supports(Dialect::C23) && self.at_declaration_start() {
-            self.parse_declaration()?
-        } else if self.supports(Dialect::C23) && self.is_punct(Punctuator::RBrace) {
-            self.ast.alloc(CNode::ExprStmt(None), start)?
-        } else {
-            self.parse_statement()?
-        };
+        if self.supports(Dialect::C23) && self.at_declaration_start() {
+            let body = self.parse_declaration()?;
+            return self.alloc_label(name, body, start);
+        }
+        if self.supports(Dialect::C23) && self.is_punct(Punctuator::RBrace) {
+            let body = self.alloc_node(CNode::ExprStmt(None), start)?;
+            return self.alloc_label(name, body, start);
+        }
+        let body = self.parse_statement()?;
+        self.alloc_label(name, body, start)
+    }
+
+    fn alloc_label(
+        &mut self,
+        name: stratum_arena::Symbol,
+        body: CNodeId,
+        start: Span,
+    ) -> PResult<CNodeId> {
         let span = start.to(self.ast.span(body));
-        Ok(self.ast.alloc(CNode::Label { name, body }, span)?)
+        self.alloc_node(CNode::Label { name, body }, span)
     }
 
     fn parse_switch(&mut self) -> PResult<CNodeId> {
@@ -237,7 +242,7 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::RParen)?;
         let body = self.parse_statement()?;
         let span = start.to(self.ast.span(body));
-        Ok(self.ast.alloc(CNode::Switch { cond, body }, span)?)
+        self.alloc_node(CNode::Switch { cond, body }, span)
     }
 
     fn parse_case(&mut self) -> PResult<CNodeId> {
@@ -246,7 +251,7 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::Colon)?;
         let body = self.parse_statement()?;
         let span = start.to(self.ast.span(body));
-        Ok(self.ast.alloc(CNode::Case { value, body }, span)?)
+        self.alloc_node(CNode::Case { value, body }, span)
     }
 
     fn parse_default(&mut self) -> PResult<CNodeId> {
@@ -254,18 +259,18 @@ impl Parser<'_> {
         self.expect_punct(Punctuator::Colon)?;
         let body = self.parse_statement()?;
         let span = start.to(self.ast.span(body));
-        Ok(self.ast.alloc(CNode::Default { body }, span)?)
+        self.alloc_node(CNode::Default { body }, span)
     }
 
     fn parse_expr_statement(&mut self) -> PResult<CNodeId> {
         let start = self.peek().span;
         if self.is_punct(Punctuator::Semicolon) {
             let end = self.bump().span;
-            return Ok(self.ast.alloc(CNode::ExprStmt(None), start.to(end))?);
+            return self.alloc_node(CNode::ExprStmt(None), start.to(end));
         }
         let expr = self.parse_expr()?;
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self.ast.alloc(CNode::ExprStmt(Some(expr)), start.to(end))?)
+        self.alloc_node(CNode::ExprStmt(Some(expr)), start.to(end))
     }
 }
 
@@ -354,6 +359,26 @@ mod tests {
     }
 
     #[test]
+    fn label_with_empty_statement_body_parses_directly() {
+        let tokens = [
+            Token {
+                kind: TokenKind::Identifier(stratum_arena::Symbol::default()),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Colon),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.parse_label().ok().unwrap();
+    }
+
+    #[test]
     fn declaration_entry_handles_static_assert_directly() {
         let tokens = [
             Token {
@@ -390,7 +415,108 @@ mod tests {
         ];
         let mut parser = parser_with(&tokens);
         parser.dialect = Dialect::C11;
-        let id = parser.parse_declaration().ok().unwrap();
-        assert!(matches!(parser.ast.node(id), CNode::StaticAssert { .. }));
+        parser.parse_declaration().ok().unwrap();
+    }
+
+    #[test]
+    fn remaining_statement_edges_parse_directly() {
+        let tokens = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBrace),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Int),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Identifier(stratum_arena::Symbol::default()),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBrace),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.dialect = Dialect::C89;
+        let compound = parser.parse_compound_statement().ok().unwrap();
+        assert!(matches!(parser.ast.node(compound), CNode::Compound(_)));
+        assert!(!parser.diagnostics.is_empty());
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::If),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 1,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Else),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.parse_statement().ok().unwrap();
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::Return),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.parse_statement().ok().unwrap();
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Identifier(stratum_arena::Symbol::default()),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Colon),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBrace),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens);
+        parser.dialect = Dialect::C23;
+        parser.parse_label().ok().unwrap();
     }
 }

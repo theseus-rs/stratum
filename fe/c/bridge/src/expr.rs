@@ -324,15 +324,55 @@ fn compound_op(op: AssignOp) -> Option<BinaryOp> {
 
 #[cfg(test)]
 mod tests {
-    use super::CLowering;
+    use super::{CLowering, compound_op, map_binary_op, map_unary_op};
     use crate::alloc_prelude::*;
     use crate::test_utils::dump;
-    use stratum_c_ast::{CAst, CNode, InitItem};
+    use stratum_arena::Symbol;
+    use stratum_c_ast::{
+        AssignOp, BinaryOp as CBinaryOp, CAst, CNode, CNodeId, DeclSpecifiers, Declarator,
+        InitItem, PostfixOp as CPostfixOp, TypeName, TypeSpecifier, UnaryOp as CUnaryOp,
+    };
     use stratum_diagnostics::{FileId, Span};
-    use stratum_hir::{HirContext, HirNode};
+    use stratum_hir::{BinaryOp, HirContext, HirNode, UnaryOp};
 
     fn span() -> Span {
         Span::point(FileId::from_raw(0), 0)
+    }
+
+    fn valid_expr(ast: &mut CAst) -> CNodeId {
+        ast.alloc(CNode::BoolLiteral(true), span()).unwrap()
+    }
+
+    fn invalid_expr(ast: &mut CAst) -> CNodeId {
+        ast.alloc(CNode::Ident(Symbol::default()), span()).unwrap()
+    }
+
+    fn int_type_name() -> TypeName {
+        TypeName {
+            specifiers: DeclSpecifiers {
+                type_specifiers: vec![TypeSpecifier::Int],
+                ..DeclSpecifiers::default()
+            },
+            declarator: Declarator::default(),
+        }
+    }
+
+    fn invalid_type_name() -> TypeName {
+        TypeName {
+            specifiers: DeclSpecifiers {
+                type_specifiers: vec![TypeSpecifier::TypedefName(Symbol::default())],
+                ..DeclSpecifiers::default()
+            },
+            declarator: Declarator::default(),
+        }
+    }
+
+    fn assert_lower_expr_err(build: impl FnOnce(&mut CAst) -> CNodeId) {
+        let mut ast = CAst::new();
+        let id = build(&mut ast);
+        let mut lowering = CLowering::new(&ast);
+        let mut hir = HirContext::new();
+        assert!(lowering.lower_expr(&mut hir, id).is_err());
     }
 
     #[test]
@@ -349,9 +389,72 @@ mod tests {
     }
 
     #[test]
+    fn operator_mapping_tables_cover_every_arm() {
+        for (c, hir) in [
+            (CBinaryOp::Mul, BinaryOp::Mul),
+            (CBinaryOp::Div, BinaryOp::Div),
+            (CBinaryOp::Rem, BinaryOp::Rem),
+            (CBinaryOp::Add, BinaryOp::Add),
+            (CBinaryOp::Sub, BinaryOp::Sub),
+            (CBinaryOp::Shl, BinaryOp::Shl),
+            (CBinaryOp::Shr, BinaryOp::Shr),
+            (CBinaryOp::Lt, BinaryOp::Lt),
+            (CBinaryOp::Gt, BinaryOp::Gt),
+            (CBinaryOp::Le, BinaryOp::Le),
+            (CBinaryOp::Ge, BinaryOp::Ge),
+            (CBinaryOp::Eq, BinaryOp::Eq),
+            (CBinaryOp::Ne, BinaryOp::Ne),
+            (CBinaryOp::BitAnd, BinaryOp::BitAnd),
+            (CBinaryOp::BitXor, BinaryOp::BitXor),
+            (CBinaryOp::BitOr, BinaryOp::BitOr),
+            (CBinaryOp::LogicalAnd, BinaryOp::LogicalAnd),
+            (CBinaryOp::LogicalOr, BinaryOp::LogicalOr),
+        ] {
+            assert_eq!(map_binary_op(c), hir);
+        }
+
+        for (c, hir) in [
+            (CUnaryOp::Plus, UnaryOp::Plus),
+            (CUnaryOp::Neg, UnaryOp::Neg),
+            (CUnaryOp::Not, UnaryOp::Not),
+            (CUnaryOp::BitNot, UnaryOp::BitNot),
+            (CUnaryOp::AddressOf, UnaryOp::AddressOf),
+            (CUnaryOp::Deref, UnaryOp::Deref),
+            (CUnaryOp::PreInc, UnaryOp::PreInc),
+            (CUnaryOp::PreDec, UnaryOp::PreDec),
+        ] {
+            assert_eq!(map_unary_op(c), hir);
+        }
+
+        assert_eq!(compound_op(AssignOp::Assign), None);
+        for (c, hir) in [
+            (AssignOp::Mul, BinaryOp::Mul),
+            (AssignOp::Div, BinaryOp::Div),
+            (AssignOp::Rem, BinaryOp::Rem),
+            (AssignOp::Add, BinaryOp::Add),
+            (AssignOp::Sub, BinaryOp::Sub),
+            (AssignOp::Shl, BinaryOp::Shl),
+            (AssignOp::Shr, BinaryOp::Shr),
+            (AssignOp::And, BinaryOp::BitAnd),
+            (AssignOp::Xor, BinaryOp::BitXor),
+            (AssignOp::Or, BinaryOp::BitOr),
+        ] {
+            assert_eq!(compound_op(c), Some(hir));
+        }
+    }
+
+    #[test]
     fn post_increment_is_first_class() {
         let out = dump("void f(int x) { x++; }");
         assert!(out.contains("postfix `++`"), "got: {out}");
+    }
+
+    #[test]
+    fn char_float_and_string_literals_lower_as_first_class_nodes() {
+        let out = dump("void f(void) { char c = 'x'; double d = 1.5; char *s = \"hi\"; }");
+        assert!(out.contains("char 120"), "got: {out}");
+        assert!(out.contains("float 1.5"), "got: {out}");
+        assert!(out.contains("string \"hi\""), "got: {out}");
     }
 
     #[test]
@@ -464,5 +567,265 @@ mod tests {
         let mut hir = HirContext::new();
 
         assert!(lowering.lower_grouping_expr(&mut hir, id, span()).is_err());
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single table covers expression lowering error propagation arms"
+    )]
+    fn expression_lowering_propagates_child_errors() {
+        assert_lower_expr_err(|ast| ast.alloc(CNode::Ident(Symbol::default()), span()).unwrap());
+        assert_lower_expr_err(|ast| {
+            ast.alloc(CNode::IntLiteral(Symbol::default()), span())
+                .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            ast.alloc(CNode::CharLiteral(Symbol::default()), span())
+                .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            ast.alloc(CNode::FloatLiteral(Symbol::default()), span())
+                .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            ast.alloc(CNode::StringLiteral(Symbol::default()), span())
+                .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let lhs = invalid_expr(ast);
+            let rhs = valid_expr(ast);
+            ast.alloc(
+                CNode::Binary {
+                    op: CBinaryOp::Add,
+                    lhs,
+                    rhs,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let lhs = valid_expr(ast);
+            let rhs = invalid_expr(ast);
+            ast.alloc(
+                CNode::Binary {
+                    op: CBinaryOp::Add,
+                    lhs,
+                    rhs,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let operand = invalid_expr(ast);
+            ast.alloc(
+                CNode::Unary {
+                    op: CUnaryOp::Neg,
+                    operand,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let operand = invalid_expr(ast);
+            ast.alloc(
+                CNode::Postfix {
+                    op: CPostfixOp::PostInc,
+                    operand,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let target = invalid_expr(ast);
+            let value = valid_expr(ast);
+            ast.alloc(
+                CNode::Assign {
+                    op: AssignOp::Assign,
+                    target,
+                    value,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let target = valid_expr(ast);
+            let value = invalid_expr(ast);
+            ast.alloc(
+                CNode::Assign {
+                    op: AssignOp::Assign,
+                    target,
+                    value,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let cond = invalid_expr(ast);
+            let then_expr = valid_expr(ast);
+            let else_expr = valid_expr(ast);
+            ast.alloc(
+                CNode::Conditional {
+                    cond,
+                    then_expr,
+                    else_expr,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let cond = valid_expr(ast);
+            let then_expr = invalid_expr(ast);
+            let else_expr = valid_expr(ast);
+            ast.alloc(
+                CNode::Conditional {
+                    cond,
+                    then_expr,
+                    else_expr,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let cond = valid_expr(ast);
+            let then_expr = valid_expr(ast);
+            let else_expr = invalid_expr(ast);
+            ast.alloc(
+                CNode::Conditional {
+                    cond,
+                    then_expr,
+                    else_expr,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let lhs = invalid_expr(ast);
+            let rhs = valid_expr(ast);
+            ast.alloc(CNode::Comma { lhs, rhs }, span()).unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let lhs = valid_expr(ast);
+            let rhs = invalid_expr(ast);
+            ast.alloc(CNode::Comma { lhs, rhs }, span()).unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let callee = invalid_expr(ast);
+            ast.alloc(
+                CNode::Call {
+                    callee,
+                    args: Vec::new(),
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let callee = valid_expr(ast);
+            let arg = invalid_expr(ast);
+            ast.alloc(
+                CNode::Call {
+                    callee,
+                    args: vec![arg],
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let base = invalid_expr(ast);
+            ast.alloc(
+                CNode::Member {
+                    base,
+                    field: Symbol::default(),
+                    arrow: false,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let base = valid_expr(ast);
+            ast.alloc(
+                CNode::Member {
+                    base,
+                    field: Symbol::default(),
+                    arrow: false,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let base = invalid_expr(ast);
+            let index = valid_expr(ast);
+            ast.alloc(CNode::Index { base, index }, span()).unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let base = valid_expr(ast);
+            let index = invalid_expr(ast);
+            ast.alloc(CNode::Index { base, index }, span()).unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let expr = valid_expr(ast);
+            ast.alloc(
+                CNode::Cast {
+                    type_name: invalid_type_name(),
+                    expr,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let expr = invalid_expr(ast);
+            ast.alloc(
+                CNode::Cast {
+                    type_name: int_type_name(),
+                    expr,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let operand = invalid_expr(ast);
+            ast.alloc(CNode::SizeofExpr(operand), span()).unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            ast.alloc(CNode::SizeofType(invalid_type_name()), span())
+                .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let init = valid_expr(ast);
+            ast.alloc(
+                CNode::CompoundLiteral {
+                    type_name: invalid_type_name(),
+                    init,
+                },
+                span(),
+            )
+            .unwrap()
+        });
+        assert_lower_expr_err(|ast| {
+            let init = invalid_expr(ast);
+            ast.alloc(
+                CNode::CompoundLiteral {
+                    type_name: int_type_name(),
+                    init,
+                },
+                span(),
+            )
+            .unwrap()
+        });
     }
 }

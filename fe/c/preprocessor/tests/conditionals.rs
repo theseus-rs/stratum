@@ -72,6 +72,18 @@ fn hexadecimal_literal() {
 }
 
 #[test]
+fn invalid_integer_literal_reports_error() {
+    assert_errors("#if 09\nbad\n#endif");
+}
+
+#[test]
+fn malformed_nested_condition_expressions_report_errors() {
+    assert_errors("#if 1 ? 1 + : 0\nbad\n#endif");
+    assert_errors("#if 0 ? 1 : 1 +\nbad\n#endif");
+    assert_errors("#if 1 +\nbad\n#endif");
+}
+
+#[test]
 fn integer_division_truncates() {
     assert_expands("#if 10 / 3 == 3\nok\n#endif", "ok");
 }
@@ -104,6 +116,14 @@ fn ternary_in_condition() {
 #[test]
 fn character_constant_in_condition() {
     assert_expands("#if 'A' == 65\nok\n#endif", "ok");
+}
+
+#[test]
+fn unary_division_and_escaped_char_condition() {
+    assert_expands(
+        "#if +'\\n' == 10 && '\\t' == 9 && '\\r' == 13 && '\\\\' == 92 && 'A' == 65 && 8 / 2 == 4 && 5 % 2 == 1\nok\n#endif",
+        "ok",
+    );
 }
 
 #[test]

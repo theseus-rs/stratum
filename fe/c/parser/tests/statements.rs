@@ -111,6 +111,16 @@ fn goto_and_label() {
 }
 
 #[test]
+fn c23_label_with_declaration_and_empty_body() {
+    assert_ok("int f() { label_decl: int x; label_empty: }");
+}
+
+#[test]
+fn empty_local_declaration_and_static_assert() {
+    assert_ok("int f() { int; _Static_assert(1, \"ok\"); }");
+}
+
+#[test]
 fn switch_with_cases() {
     stmt(
         "switch (x) { case 1: break; default: break; }",
