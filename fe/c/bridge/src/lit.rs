@@ -158,6 +158,22 @@ mod tests {
     }
 
     #[test]
+    fn valid_literal_helpers_return_parsed_values() {
+        let mut ast = CAst::new();
+        let int = ast.intern("0x2a").unwrap();
+        let ch = ast.intern("'\\x41'").unwrap();
+        let len_sym = ast.intern("12").unwrap();
+        let len = ast.alloc(CNode::IntLiteral(len_sym), span()).unwrap();
+        let lowering = CLowering::new(&ast);
+        let mut lowering = lowering;
+
+        assert_eq!(lowering.parse_int_literal(int, span()).unwrap(), 42);
+        assert_eq!(lowering.parse_char_literal(ch, span()).unwrap(), 65);
+        assert_eq!(lowering.const_array_len(len).unwrap(), Some(12));
+        assert!(lowering.diagnostics.is_empty());
+    }
+
+    #[test]
     fn const_array_len_ignores_non_integer_nodes() {
         let mut ast = CAst::new();
         let name = ast.intern("n").unwrap();

@@ -11,18 +11,18 @@ use stratum_diagnostics::SourceMap;
 /// Parses `src` into a C AST.
 pub(crate) fn build(src: &str) -> CAst {
     let mut map = SourceMap::new();
-    let file = map.add_root("test.c", src).expect("test source is valid");
+    let file = map.add_root("test.c", src).unwrap();
     let mut interner = Interner::new();
-    let lexed = lex(src, file, &mut interner).expect("test source lexes");
+    let lexed = lex(src, file, &mut interner).unwrap();
     let finalized = finalize(&lexed.tokens, &mut interner);
-    let parsed = parse(&finalized.tokens, interner).expect("test source parses");
+    let parsed = parse(&finalized.tokens, interner).unwrap();
     parsed.ast
 }
 
 /// Lowers `src` and returns the HIR dump of the module root.
 pub(crate) fn dump(src: &str) -> String {
     let ast = build(src);
-    let result = lower(&ast).expect("test source lowers");
+    let result = lower(&ast).unwrap();
     assert!(
         !result.has_errors(),
         "unexpected lowering errors: {:?}",

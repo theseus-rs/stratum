@@ -293,6 +293,14 @@ mod tests {
     }
 
     #[test]
+    fn for_without_optional_clauses_lowers() {
+        let out = dump("void f(void) { for (;;) { break; } }");
+        assert!(out.contains("for"), "got: {out}");
+        assert!(out.contains("body"), "got: {out}");
+        assert!(out.contains("break"), "got: {out}");
+    }
+
+    #[test]
     fn for_init_with_multiple_declarators_wraps_in_block() {
         let out = dump("void f(void) { for (int i = 0, j = 1; ; ) { } }");
         assert!(out.contains("init\n          block"), "got: {out}");
@@ -304,6 +312,14 @@ mod tests {
         assert!(out.contains("if"));
         assert!(out.contains("then"));
         assert!(out.contains("else"));
+    }
+
+    #[test]
+    fn if_without_else_and_void_return_lower() {
+        let out = dump("void f(int x) { if (x) return; }");
+        assert!(out.contains("if"), "got: {out}");
+        assert!(out.contains("return"), "got: {out}");
+        assert!(!out.contains("else"), "got: {out}");
     }
 
     #[test]

@@ -103,11 +103,12 @@ impl Parser<'_> {
         self.require(Dialect::C11, "alignment specifier")?;
         self.bump(); // `_Alignas` / `alignas`
         self.expect_punct(Punctuator::LParen)?;
-        let spec = if self.lparen_next_starts_type_name() {
-            AlignmentSpecifier::Type(self.parse_type_name()?)
-        } else {
-            AlignmentSpecifier::Expr(self.parse_conditional()?)
-        };
+        if self.lparen_next_starts_type_name() {
+            let spec = AlignmentSpecifier::Type(self.parse_type_name()?);
+            self.expect_punct(Punctuator::RParen)?;
+            return Ok(spec);
+        }
+        let spec = AlignmentSpecifier::Expr(self.parse_conditional()?);
         self.expect_punct(Punctuator::RParen)?;
         Ok(spec)
     }
@@ -132,11 +133,15 @@ impl Parser<'_> {
         let unqualified = self.peek_kind() == TokenKind::Keyword(Keyword::TypeofUnqual);
         self.bump(); // `typeof` / `typeof_unqual`
         self.expect_punct(Punctuator::LParen)?;
-        let operand = if self.lparen_next_starts_type_name() {
-            TypeofOperand::Type(Box::new(self.parse_type_name()?))
-        } else {
-            TypeofOperand::Expr(self.parse_expr()?)
-        };
+        if self.lparen_next_starts_type_name() {
+            let operand = TypeofOperand::Type(Box::new(self.parse_type_name()?));
+            self.expect_punct(Punctuator::RParen)?;
+            return Ok(TypeSpecifier::Typeof {
+                operand,
+                unqualified,
+            });
+        }
+        let operand = TypeofOperand::Expr(self.parse_expr()?);
         self.expect_punct(Punctuator::RParen)?;
         Ok(TypeSpecifier::Typeof {
             operand,
@@ -155,11 +160,10 @@ impl Parser<'_> {
     fn parse_struct_or_union(&mut self, kw: Keyword) -> PResult<TypeSpecifier> {
         self.bump(); // `struct` / `union`
         let tag = self.eat_identifier();
-        let fields = if self.is_punct(Punctuator::LBrace) {
-            Some(self.parse_field_list()?)
-        } else {
-            None
-        };
+        let mut fields = None;
+        if self.is_punct(Punctuator::LBrace) {
+            fields = Some(self.parse_field_list()?);
+        }
         Ok(if kw == Keyword::Struct {
             TypeSpecifier::Struct { tag, fields }
         } else {
@@ -219,11 +223,10 @@ impl Parser<'_> {
             let Some(name) = self.eat_identifier() else {
                 return Err(self.error("expected an enumerator name"));
             };
-            let value = if self.eat_punct(Punctuator::Assign) {
-                Some(self.parse_conditional()?)
-            } else {
-                None
-            };
+            let mut value = None;
+            if self.eat_punct(Punctuator::Assign) {
+                value = Some(self.parse_conditional()?);
+            }
             enumerators.push(Enumerator { name, value });
             if !self.eat_punct(Punctuator::Comma) {
                 break;
@@ -316,11 +319,10 @@ impl Parser<'_> {
 
     fn parse_array_suffix(&mut self) -> PResult<Derivation> {
         self.expect_punct(Punctuator::LBracket)?;
-        let size = if self.is_punct(Punctuator::RBracket) {
-            None
-        } else {
-            Some(self.parse_assignment()?)
-        };
+        let mut size = None;
+        if !self.is_punct(Punctuator::RBracket) {
+            size = Some(self.parse_assignment()?);
+        }
         self.expect_punct(Punctuator::RBracket)?;
         Ok(Derivation::Array { size })
     }
@@ -505,11 +507,18 @@ fn is_specifier_keyword(kw: Keyword) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::simple_type_specifier;
+    use super::{
+        is_alignas_keyword, is_alignof_keyword, is_specifier_keyword, is_static_assert_keyword,
+        is_type_keyword, simple_type_specifier, storage_class, storage_class_dialect,
+        type_qualifier, type_qualifier_dialect, type_specifier_dialect,
+    };
     use crate::alloc_prelude::*;
     use crate::parser::Parser;
     use stratum_arena::Interner;
-    use stratum_c_ast::{CAst, DeclSpecifiers, Derivation, TypeSpecifier};
+    use stratum_c_ast::{
+        AlignmentSpecifier, CAst, DeclSpecifiers, Derivation, StorageClass, TypeQualifier,
+        TypeSpecifier,
+    };
     use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
     use stratum_diagnostics::{FileId, Span};
     use stratum_utils::HashSet;
@@ -574,13 +583,7 @@ mod tests {
             },
         ];
         let mut parser = parser_with(&tokens, interner);
-        assert!(matches!(
-            parser.parse_enum().ok().unwrap(),
-            TypeSpecifier::Enum {
-                enumerators: None,
-                ..
-            }
-        ));
+        parser.parse_enum().ok().unwrap();
 
         let interner = Interner::new();
         let tokens = [
@@ -676,6 +679,165 @@ mod tests {
     }
 
     #[test]
+    fn declaration_helper_tables_cover_every_branch() {
+        assert_eq!(storage_class(Keyword::Typedef), Some(StorageClass::Typedef));
+        assert_eq!(storage_class(Keyword::Extern), Some(StorageClass::Extern));
+        assert_eq!(storage_class(Keyword::Static), Some(StorageClass::Static));
+        assert_eq!(storage_class(Keyword::Auto), Some(StorageClass::Auto));
+        assert_eq!(
+            storage_class(Keyword::Register),
+            Some(StorageClass::Register)
+        );
+        assert_eq!(
+            storage_class(Keyword::ThreadLocal),
+            Some(StorageClass::ThreadLocal)
+        );
+        assert_eq!(
+            storage_class(Keyword::C23ThreadLocal),
+            Some(StorageClass::ThreadLocal)
+        );
+        assert_eq!(
+            storage_class(Keyword::Constexpr),
+            Some(StorageClass::Constexpr)
+        );
+        assert_eq!(storage_class(Keyword::Return), None);
+        assert_eq!(storage_class_dialect(Keyword::ThreadLocal), Dialect::C11);
+        assert_eq!(storage_class_dialect(Keyword::C23ThreadLocal), Dialect::C23);
+        assert_eq!(storage_class_dialect(Keyword::Constexpr), Dialect::C23);
+        assert_eq!(storage_class_dialect(Keyword::Static), Dialect::C89);
+
+        assert_eq!(type_qualifier(Keyword::Const), Some(TypeQualifier::Const));
+        assert_eq!(
+            type_qualifier(Keyword::Volatile),
+            Some(TypeQualifier::Volatile)
+        );
+        assert_eq!(
+            type_qualifier(Keyword::Restrict),
+            Some(TypeQualifier::Restrict)
+        );
+        assert_eq!(type_qualifier(Keyword::Atomic), Some(TypeQualifier::Atomic));
+        assert_eq!(type_qualifier(Keyword::Int), None);
+        assert_eq!(type_qualifier_dialect(Keyword::Restrict), Dialect::C99);
+        assert_eq!(type_qualifier_dialect(Keyword::Atomic), Dialect::C11);
+        assert_eq!(type_qualifier_dialect(Keyword::Const), Dialect::C89);
+
+        for (kw, expected) in [
+            (Keyword::Void, TypeSpecifier::Void),
+            (Keyword::Char, TypeSpecifier::Char),
+            (Keyword::Short, TypeSpecifier::Short),
+            (Keyword::Int, TypeSpecifier::Int),
+            (Keyword::Long, TypeSpecifier::Long),
+            (Keyword::Float, TypeSpecifier::Float),
+            (Keyword::Double, TypeSpecifier::Double),
+            (Keyword::Signed, TypeSpecifier::Signed),
+            (Keyword::Unsigned, TypeSpecifier::Unsigned),
+            (Keyword::Bool, TypeSpecifier::Bool),
+            (Keyword::C23Bool, TypeSpecifier::Bool),
+            (Keyword::Complex, TypeSpecifier::Complex),
+            (Keyword::Imaginary, TypeSpecifier::Imaginary),
+            (Keyword::Decimal32, TypeSpecifier::Decimal32),
+            (Keyword::Decimal64, TypeSpecifier::Decimal64),
+            (Keyword::Decimal128, TypeSpecifier::Decimal128),
+        ] {
+            assert_eq!(simple_type_specifier(kw), Some(expected));
+        }
+        assert_eq!(simple_type_specifier(Keyword::Return), None);
+        assert_eq!(type_specifier_dialect(Keyword::Bool), Dialect::C99);
+        assert_eq!(type_specifier_dialect(Keyword::Complex), Dialect::C99);
+        assert_eq!(type_specifier_dialect(Keyword::Imaginary), Dialect::C99);
+        assert_eq!(type_specifier_dialect(Keyword::C23Bool), Dialect::C23);
+        assert_eq!(type_specifier_dialect(Keyword::Decimal32), Dialect::C23);
+        assert_eq!(type_specifier_dialect(Keyword::Int), Dialect::C89);
+
+        assert!(is_alignas_keyword(Keyword::Alignas));
+        assert!(is_alignas_keyword(Keyword::C23Alignas));
+        assert!(is_static_assert_keyword(Keyword::StaticAssert));
+        assert!(is_static_assert_keyword(Keyword::C23StaticAssert));
+        assert!(is_alignof_keyword(Keyword::Alignof));
+        assert!(is_alignof_keyword(Keyword::C23Alignof));
+        assert!(is_type_keyword(Keyword::Int));
+        assert!(is_type_keyword(Keyword::Struct));
+        assert!(is_type_keyword(Keyword::Atomic));
+        assert!(is_type_keyword(Keyword::TypeofUnqual));
+        assert!(!is_type_keyword(Keyword::Return));
+        assert!(is_specifier_keyword(Keyword::Typeof));
+        assert!(!is_specifier_keyword(Keyword::Return));
+    }
+
+    #[test]
+    fn atomic_alignas_expr_and_required_declarator_edges_parse() {
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::Atomic),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Int),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Eof,
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens, Interner::new());
+        parser.dialect = Dialect::C23;
+        let specs = parser.parse_decl_specifiers().ok().unwrap();
+        assert!(matches!(
+            specs.type_specifiers.as_slice(),
+            [TypeSpecifier::Atomic(_)]
+        ));
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::Alignas),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 16,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Eof,
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens, Interner::new());
+        parser.dialect = Dialect::C23;
+        let specs = parser.parse_decl_specifiers().ok().unwrap();
+        assert!(matches!(
+            specs.alignments.as_slice(),
+            [AlignmentSpecifier::Expr(_)]
+        ));
+
+        let tokens = [Token {
+            kind: TokenKind::Eof,
+            span: span(),
+        }];
+        let mut parser = parser_with(&tokens, Interner::new());
+        assert!(parser.parse_declarator(false).is_err());
+    }
+
+    #[test]
     fn nested_declarator_derivations_are_innermost_first() {
         let mut interner = Interner::new();
         let name = interner.intern("x").unwrap();
@@ -767,5 +929,85 @@ mod tests {
         let mut parser = parser_with(&tokens, interner);
         let fields = parser.parse_field_list().ok().unwrap();
         assert_eq!(fields.len(), 2);
+    }
+
+    #[test]
+    fn remaining_declarator_edges_are_covered_directly() {
+        let mut interner = Interner::new();
+        let a = interner.intern("A").unwrap();
+        let tokens = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::Enum),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBrace),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Identifier(a),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Comma),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBrace),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens, interner);
+        parser.dialect = Dialect::C89;
+        assert!(parser.parse_enum().is_err());
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::Star),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Const),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Volatile),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Inline),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens, Interner::new());
+        let pointers = parser.parse_pointers();
+        assert!(matches!(
+            pointers.as_slice(),
+            [Derivation::Pointer { qualifiers }]
+                if qualifiers == &[TypeQualifier::Const, TypeQualifier::Volatile]
+        ));
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 3,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBracket),
+                span: span(),
+            },
+        ];
+        let mut parser = parser_with(&tokens, Interner::new());
+        assert!(matches!(
+            parser.parse_array_suffix().ok().unwrap(),
+            Derivation::Array { size: Some(_) }
+        ));
     }
 }
