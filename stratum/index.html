@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en" id="oranda" class="dark">
+  <head>
+    <title>My Oranda Project</title>
+    
+    
+      <link rel="icon" href="/stratum/stratum/favicon.ico" />
+    
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="My Oranda Project" />
+    
+    
+    
+    <meta http-equiv="Permissions-Policy" content="interest-cohort=()" />
+    <link rel="stylesheet" href="/stratum/stratum/oranda-v0.6.1.css" />
+    
+    
+  </head>
+  <body>
+    <div class="container">
+      <div class="page-body">
+        
+
+        <main>
+          <header>
+            
+            <h1 class="title">My Oranda Project</h1>
+            
+  <nav class="nav">
+    <ul>
+      <li><a href="/stratum/stratum/">Home</a></li>
+
+      
+
+      
+
+      
+
+      
+        <li><a href="/stratum/stratum/funding/">Funding</a></li>
+      
+
+      
+    </ul>
+  </nav>
+
+          </header>
+
+          
+
+
+    <h1>stratum</h1>
+<p><a href="https://github.com/theseus-rs/stratum/actions/workflows/ci.yml" rel="noopener noreferrer"><img src="https://github.com/theseus-rs/stratum/actions/workflows/ci.yml/badge.svg?branch=main" alt="ci"></a>
+<a href="https://docs.rs/stratum_hir" rel="noopener noreferrer"><img src="https://docs.rs/stratum_hir/badge.svg" alt="Documentation"></a>
+<a href="https://codecov.io/gh/theseus-rs/stratum" rel="noopener noreferrer"><img src="https://codecov.io/gh/theseus-rs/stratum/branch/main/graph/badge.svg" alt="Code Coverage"></a>
+<a href="https://crates.io/crates/stratum_hir" rel="noopener noreferrer"><img src="https://img.shields.io/crates/v/stratum_hir.svg" alt="Latest version"></a>
+<a href="https://github.com/theseus-rs/stratum#license" rel="noopener noreferrer"><img src="https://img.shields.io/crates/l/stratum_hir" alt="License"></a>
+<a href="https://semver.org/spec/v2.0.0.html" rel="noopener noreferrer"><img src="https://img.shields.io/badge/%E2%9A%99%EF%B8%8F_SemVer-2.0.0-blue" alt="Semantic Versioning"></a></p>
+<p>Experimental, multi-language compiler tools built around a unified intermediate
+representation. Stratum is designed so that several source languages can converge on a
+single, language-neutral <strong>High-level Intermediate Representation (HIR)</strong>, after which the
+middle- and back-ends never need to know which language the code came from.</p>
+<h2>Pipeline</h2>
+<p>The long-term target is the full lowering chain:</p>
+<pre style="background-color:#263238;"><span style="color:#eeffff;">Source ↔ HIR ↔ MIR (SSA + CFG) ↔ LIR (roles + layout) ↔ ASM ↔ OIR ↔ Binary
+</span></pre>
+
+<p>This repository currently implements the <strong>frontend convergence point</strong> and the
+<strong>binary end</strong> of the chain: shared infrastructure, the shared HIR, a dialect-aware
+<strong>C frontend</strong> that lowers into HIR, and a format-neutral <strong>Object Intermediate
+Representation (OIR)</strong> with symmetric read/write codecs for ELF, Mach-O, PE/COFF,
+WebAssembly, DWARF, CodeView, and PDB/MSF. The OIR crate is <code>stratum_oir</code> in
+<code>ir/oir/</code>; format codecs live under <code>be/object/</code>, and <code>stratum_object_driver</code> in
+<code>be/object/driver/</code> provides magic-byte sniffing plus read/write dispatch. The frontend
+accepts C89/C90, C99, C11, C17/C18, and C23 modes; the C89/C99 surface has the most
+complete structure-preserving HIR coverage, while selected C11/C23 constructs are parsed
+and carried through the current representation. The intermediate MIR / LIR / ASM stages
+are intentionally deferred.</p>
+<pre style="background-color:#263238;"><span style="color:#eeffff;">   C source
+</span><span style="color:#eeffff;">      |
+</span><span style="color:#eeffff;">      v
+</span><span style="color:#eeffff;">+-------------+   pp-tokens   +------------------+   pp-tokens
+</span><span style="color:#eeffff;">|  c-lexer    | ------------&gt; |  c-preprocessor  | ------------+
+</span><span style="color:#eeffff;">+-------------+               +------------------+             |
+</span><span style="color:#eeffff;">                                                               v
+</span><span style="color:#eeffff;">                                                     +------------------+  tokens
+</span><span style="color:#eeffff;">                                                     | finalize (parser)|
+</span><span style="color:#eeffff;">                                                     +------------------+
+</span><span style="color:#eeffff;">                                                               |
+</span><span style="color:#eeffff;">                                                               v
+</span><span style="color:#eeffff;">                                +----------+   C AST   +------------------+
+</span><span style="color:#eeffff;">                                |  c-ast   | &lt;-------- |     c-parser     |
+</span><span style="color:#eeffff;">                                +----+-----+           +------------------+
+</span><span style="color:#eeffff;">                                     |
+</span><span style="color:#eeffff;">                         +-----------+-----------+
+</span><span style="color:#eeffff;">                         |                       |
+</span><span style="color:#eeffff;">                         v                       v
+</span><span style="color:#eeffff;">                   +-------------+          +----------+
+</span><span style="color:#eeffff;">                   | c-sema      |          | c-bridge |
+</span><span style="color:#eeffff;">                   | diagnostics |          +----+-----+
+</span><span style="color:#eeffff;">                   +-------------+               |  HirBridge
+</span><span style="color:#eeffff;">                                                 v
+</span><span style="color:#eeffff;">                                          +-------------+
+</span><span style="color:#eeffff;">                                          |     hir     |  (language-neutral)
+</span><span style="color:#eeffff;">                                          +-------------+
+</span></pre>
+
+<p>The <strong>binary end</strong> mirrors the frontend: source/HIR provenance and emitted code converge on
+the format-neutral <strong>Object Intermediate Representation (OIR)</strong>. Object containers are
+symmetric codecs behind a single <code>OirBridge</code> trait (<code>read</code> parses bytes into an <code>ObjectModule</code>,
+<code>write</code> serializes an <code>ObjectModule</code> back to bytes); debug codecs adapt the <code>DebugInfo</code>
+embedded in OIR. The <code>stratum_object_driver</code> sniffs magic bytes and dispatches to the matching
+object codec.</p>
+<pre style="background-color:#263238;"><span style="color:#eeffff;">   HIR / Source provenance                emitted code + target facts
+</span><span style="color:#eeffff;">  (FunctionRecord, LineRecord)        (sections, symbols, relocations,
+</span><span style="color:#eeffff;">              |                         segments, imports/exports, entry)
+</span><span style="color:#eeffff;">              |                                       |
+</span><span style="color:#eeffff;">              +-------------------+   +---------------+
+</span><span style="color:#eeffff;">                                  v   v
+</span><span style="color:#eeffff;">                          +-----------------------+
+</span><span style="color:#eeffff;">                          |          oir          |  format-neutral model
+</span><span style="color:#eeffff;">                          | ObjectModule + arenas |  + OirBridge trait
+</span><span style="color:#eeffff;">                          +-----------+-----------+
+</span><span style="color:#eeffff;">                                      |
+</span><span style="color:#eeffff;">                   object codecs use OirBridge; debug codecs use DebugInfo adapters
+</span><span style="color:#eeffff;">                                      |
+</span><span style="color:#eeffff;">   +---------------+---------------+--+------------+---------------+-------------+-------+
+</span><span style="color:#eeffff;">   v               v               v               v               v             v       v
+</span><span style="color:#eeffff;">+-------+      +--------+      +-------+       +--------+      +-------+    +----------+ +-----+
+</span><span style="color:#eeffff;">|  elf  |      | macho  |      |  pe   |       |  wasm  |      | dwarf |    | codeview | | pdb |
+</span><span style="color:#eeffff;">+---+---+      +---+----+      +---+---+       +---+----+      +---+---+    +-----+----+ +--+--+
+</span><span style="color:#eeffff;">    |              |               |               |               |              |        |
+</span><span style="color:#eeffff;"> ELF32/64      32/64-bit       PE32/PE32+      standard +    .debug_* DIEs    C13 line +  MSF7
+</span><span style="color:#eeffff;"> LE/BE         load cmds       data dirs       custom name   + line program   symbol      streams
+</span><span style="color:#eeffff;"> e_machine     ad-hoc sign     imports/exp     wasm32-wasi   (provenance)     subsecs     + RSDS id
+</span><span style="color:#eeffff;">    |              |               |               |
+</span><span style="color:#eeffff;">    +--------------+------+--------+---------------+
+</span><span style="color:#eeffff;">                          v
+</span><span style="color:#eeffff;">              +-----------------------+
+</span><span style="color:#eeffff;">              | stratum_object_driver |  magic-byte sniff + read/write dispatch
+</span><span style="color:#eeffff;">              +-----------------------+
+</span></pre>
+
+<h2>License</h2>
+<p>Licensed under either of <a href="LICENSE-APACHE" rel="noopener noreferrer">Apache License, Version 2.0</a> or
+<a href="LICENSE-MIT" rel="noopener noreferrer">MIT license</a> at your option.</p>
+
+
+
+        </main>
+      </div>
+
+      <footer>
+        
+        <span>
+          My Oranda Project
+        </span>
+      </footer>
+    </div>
+
+    
+    
+
+    
+
+
+  </body>
+</html>
