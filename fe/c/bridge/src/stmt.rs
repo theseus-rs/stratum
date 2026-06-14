@@ -21,9 +21,12 @@ impl CLowering<'_> {
         let mut items = Vec::new();
         if let CNode::Compound(stmts) = self.ast.node(id) {
             let stmts = stmts.clone();
-            for stmt in stmts {
-                self.lower_stmt_into(cx, stmt, &mut items)?;
-            }
+            self.push_scope();
+            let result = stmts
+                .into_iter()
+                .try_for_each(|stmt| self.lower_stmt_into(cx, stmt, &mut items));
+            self.pop_scope();
+            result?;
         } else {
             self.lower_stmt_into(cx, id, &mut items)?;
         }
@@ -169,29 +172,34 @@ impl CLowering<'_> {
             return Err(crate::error::Error::UnexpectedAstNode("for statement"));
         };
         let (init, cond, step, body) = (*init, *cond, *step, *body);
-        let init = match init {
-            Some(i) => Some(self.lower_for_init(cx, i)?),
-            None => None,
-        };
-        let cond = match cond {
-            Some(c) => Some(self.lower_expr(cx, c)?),
-            None => None,
-        };
-        let step = match step {
-            Some(s) => Some(self.lower_expr(cx, s)?),
-            None => None,
-        };
-        let body = self.lower_block(cx, body)?;
-        cx.alloc(
-            HirNode::For {
-                init,
-                cond,
-                step,
-                body,
-            },
-            span,
-        )
-        .map_err(crate::error::Error::from)
+        self.push_scope();
+        let result = (|| {
+            let init = match init {
+                Some(i) => Some(self.lower_for_init(cx, i)?),
+                None => None,
+            };
+            let cond = match cond {
+                Some(c) => Some(self.lower_expr(cx, c)?),
+                None => None,
+            };
+            let step = match step {
+                Some(s) => Some(self.lower_expr(cx, s)?),
+                None => None,
+            };
+            let body = self.lower_block(cx, body)?;
+            cx.alloc(
+                HirNode::For {
+                    init,
+                    cond,
+                    step,
+                    body,
+                },
+                span,
+            )
+            .map_err(crate::error::Error::from)
+        })();
+        self.pop_scope();
+        result
     }
 
     /// Lowers a `for` initialisation clause (an expression statement or a declaration) to a
@@ -293,6 +301,14 @@ mod tests {
     }
 
     #[test]
+    fn for_without_optional_clauses_lowers() {
+        let out = dump("void f(void) { for (;;) { break; } }");
+        assert!(out.contains("for"), "got: {out}");
+        assert!(out.contains("body"), "got: {out}");
+        assert!(out.contains("break"), "got: {out}");
+    }
+
+    #[test]
     fn for_init_with_multiple_declarators_wraps_in_block() {
         let out = dump("void f(void) { for (int i = 0, j = 1; ; ) { } }");
         assert!(out.contains("init\n          block"), "got: {out}");
@@ -304,6 +320,14 @@ mod tests {
         assert!(out.contains("if"));
         assert!(out.contains("then"));
         assert!(out.contains("else"));
+    }
+
+    #[test]
+    fn if_without_else_and_void_return_lower() {
+        let out = dump("void f(int x) { if (x) return; }");
+        assert!(out.contains("if"), "got: {out}");
+        assert!(out.contains("return"), "got: {out}");
+        assert!(!out.contains("else"), "got: {out}");
     }
 
     #[test]

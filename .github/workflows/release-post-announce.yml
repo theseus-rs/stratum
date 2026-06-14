@@ -89,7 +89,7 @@ jobs:
 
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: java
+          bin: stratum-c
           # (optional) Comma-separated list of algorithms to be used for checksum.
           # [default value: ]
           # [possible values: sha256, sha512, sha1, or md5]

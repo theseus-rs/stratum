@@ -1,0 +1,18 @@
+[package]
+name = "stratum_elf"
+description = "ELF read/write codec mapping to and from the Stratum object model"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+stratum_oir.workspace = true
+
+[lints]
+workspace = true

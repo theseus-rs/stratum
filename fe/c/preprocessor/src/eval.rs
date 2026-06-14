@@ -216,7 +216,11 @@ fn parse_pp_number(text: &str, span: Span) -> Result<i64, Diagnostic> {
 
 /// Returns the value of a character constant such as `'A'`, using only the first character.
 fn char_value(text: &str) -> i64 {
-    let inner = text.trim_start_matches(['L', 'u', 'U']).trim_matches('\'');
+    let quoted = text.trim_start_matches(['L', 'u', 'U']);
+    let inner = quoted
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap_or(quoted);
     let mut chars = inner.chars();
     match chars.next() {
         Some('\\') => match chars.next() {
@@ -249,7 +253,7 @@ mod tests {
             .into_iter()
             .filter(|t| !matches!(t.kind, stratum_c_lexer::PpTokenKind::Newline))
             .collect();
-        eval(&tokens, &interner, Span::new(FileId::from_raw(0), 0, 0)).expect("evaluates")
+        eval(&tokens, &interner, Span::new(FileId::from_raw(0), 0, 0)).unwrap()
     }
 
     fn fails(expr: &str) {
@@ -272,6 +276,7 @@ mod tests {
     #[test]
     fn logical_and_ternary() {
         assert_eq!(run("1 && 0"), 0);
+        assert_eq!(run("0 || 1"), 1);
         assert_eq!(run("1 ? 42 : 7"), 42);
         assert_eq!(run("0 ? 42 : 7"), 7);
     }
@@ -291,14 +296,21 @@ mod tests {
         assert_eq!(run("1 | 2"), 3);
         assert_eq!(run("3 ^ 1"), 2);
         assert_eq!(run("3 & 1"), 1);
+        assert_eq!(run("1 == 1"), 1);
         assert_eq!(run("1 != 2"), 1);
         assert_eq!(run("1 < 2"), 1);
         assert_eq!(run("1 <= 1"), 1);
+        assert_eq!(run("2 > 1"), 1);
         assert_eq!(run("2 >= 1"), 1);
+        assert_eq!(run("1 << 3"), 8);
         assert_eq!(run("8 >> 1"), 4);
         assert_eq!(run("5 - 3"), 2);
+        assert_eq!(run("8 / 2"), 4);
+        assert_eq!(run("5 % 2"), 1);
         assert_eq!(run("+5"), 5);
         assert_eq!(run("-5"), -5);
+        assert_eq!(run("!0"), 1);
+        assert_eq!(run("~0"), -1);
     }
 
     #[test]
@@ -306,9 +318,17 @@ mod tests {
         fails("");
         fails("1 2");
         fails("1 ? 2");
+        fails("1 ? ? : 2");
+        fails("1 ? 2 : ?");
+        fails("1 ? 1 + : 2");
+        fails("1 ? 2 : 1 +");
         fails("(1");
+        fails("(?");
         fails("1 / 0");
         fails("1 +");
+        fails("-?");
+        fails("! ?");
+        fails("~ ?");
         fails("?");
         fails("09");
     }
@@ -335,7 +355,7 @@ mod tests {
         assert_eq!(char_value("'\\t'"), 9);
         assert_eq!(char_value("'\\r'"), 13);
         assert_eq!(char_value("'\\\\'"), i64::from(b'\\'));
-        assert_eq!(char_value("'\\'x"), i64::from(b'\''));
+        assert_eq!(char_value("'\\''"), i64::from(b'\''));
         assert_eq!(char_value("'\\0'"), 0);
         assert_eq!(char_value("'\\z'"), i64::from('z' as u32));
         assert_eq!(char_value("''"), 0);

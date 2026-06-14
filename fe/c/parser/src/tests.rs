@@ -2,22 +2,26 @@
 //! Unit tests for token finalisation and the parser.
 
 use crate::alloc_prelude::*;
-use crate::{finalize, parse};
+use crate::{finalize_with_dialect, parse_with_dialect};
 use stratum_arena::Interner;
 use stratum_c_ast::CAst;
-use stratum_c_lexer::lex;
+use stratum_c_lexer::{Dialect, lex};
 use stratum_diagnostics::SourceMap;
 
 /// Parses `src` end-to-end and returns the resulting AST.
 fn parse_src(src: &str) -> CAst {
+    parse_src_with_dialect(src, Dialect::DEFAULT)
+}
+
+fn parse_src_with_dialect(src: &str, dialect: Dialect) -> CAst {
     let mut map = SourceMap::new();
     let file = map.add_root("t.c", src);
     let mut interner = Interner::new();
     let lexed = lex(src, file.unwrap(), &mut interner).unwrap();
     assert!(!lexed.has_errors(), "lex errors");
-    let finalized = finalize(&lexed.tokens, &mut interner);
+    let finalized = finalize_with_dialect(&lexed.tokens, &mut interner, dialect);
     assert!(finalized.diagnostics.is_empty(), "finalize errors");
-    let result = parse(&finalized.tokens, interner).unwrap();
+    let result = parse_with_dialect(&finalized.tokens, interner, dialect).unwrap();
     assert!(
         !result.has_errors(),
         "parse errors: {:?}",
@@ -114,6 +118,11 @@ fn global_declaration() {
 }
 
 #[test]
+fn global_declaration_with_multiple_declarators() {
+    assert_eq!(dump_root("int x, y;"), "(tu (decl x y))");
+}
+
+#[test]
 fn typedef_then_use() {
     // After `typedef int myint;`, `myint` must parse as a type, not an identifier.
     assert_eq!(
@@ -207,7 +216,106 @@ fn missing_semicolon_reports_error() {
     let file = map.add_root("t.c", src);
     let mut interner = Interner::new();
     let lexed = lex(src, file.unwrap(), &mut interner).unwrap();
-    let finalized = finalize(&lexed.tokens, &mut interner);
-    let result = parse(&finalized.tokens, interner).unwrap();
+    let finalized = finalize_with_dialect(&lexed.tokens, &mut interner, Dialect::DEFAULT);
+    let result = parse_with_dialect(&finalized.tokens, interner, Dialect::DEFAULT).unwrap();
     assert!(result.has_errors());
+}
+
+#[test]
+fn rich_c23_surface_parses_in_unit_test_binary() {
+    let src = r#"
+        typedef int Int;
+        struct P { int x; int y; };
+        union U { int i; float f; };
+        enum E { A = 1, B, C = 5 };
+        _Static_assert(1, "ok");
+        static_assert(1);
+        _Noreturn void no_return(void);
+        thread_local _BitInt(17) bits;
+        const volatile _Atomic int qualified;
+        _Complex double complex_value;
+        alignas(16) int expr_aligned;
+        alignas(int) int typed_align;
+        typeof(bits) bit_copy;
+        typeof_unqual(int *) ptr;
+        int (*nested_fp)(Int, ...);
+        _Decimal32 d32;
+        _Decimal64 d64;
+        _Decimal128 d128;
+        struct Bits {
+            _Static_assert(1, "field ok");
+            unsigned x : 3, y;
+        };
+
+        int g(int x) { return x; }
+
+        int f(struct P *p, struct P q, int *a, double d) {
+            [[maybe_unused]] int b = true;
+            _Static_assert(1, "block ok");
+            int c = false;
+            char ch = '\n';
+            char *s = "hi";
+            float fl = 1.25;
+            void *np = nullptr;
+            int arr[4] = { [0] = 1, [3] = 9 };
+            struct P r = (struct P){ .x = 7, .y = 8 };
+            b = +b;
+            b = ~b;
+            b = !b;
+            ++b;
+            --b;
+            b++;
+            b--;
+            b = b * 2 / 3 % 4 + (b << 1) - (b >> 1);
+            b = (b < 1) + (b <= 2) + (b > 3) + (b >= 4) + (b == 5) + (b != 6);
+            b = (b & 7) ^ (b | 8);
+            b = (b && 1) || 0;
+            b += 1;
+            b -= 1;
+            b *= 2;
+            b /= 2;
+            b %= 2;
+            b <<= 1;
+            b >>= 1;
+            b &= 7;
+            b |= 8;
+            b ^= 9;
+            if (b) {
+                b = p->x + q.y + a[2] + r.x + arr[3];
+            } else {
+                b = (int)d;
+            }
+            switch (b) {
+            case 0:
+                break;
+            default:
+                goto done;
+            }
+            for (int i = 0; i < 3; i++) {
+                continue;
+            }
+            while (b) {
+                b--;
+            }
+            do {
+                b++;
+            } while (b < 10);
+        label_decl:
+            int declared_after_label;
+        label_assert:
+            _Static_assert(1, "label ok");
+        label_empty:
+            ;
+            for (; ; ) {
+                break;
+            }
+        done:
+            return g(b ? b : 1) + (b++, b) + _Generic(b, int: b, default: 0)
+                + sizeof(int) + sizeof b + alignof b + _Alignof(int)
+                + s[0] + ch + c + declared_after_label + (int)fl;
+        }
+    "#;
+
+    let ast = parse_src_with_dialect(src, Dialect::C23);
+    assert!(ast.dump_root().contains("(fn f"));
 }

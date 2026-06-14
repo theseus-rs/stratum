@@ -1,0 +1,21 @@
+[package]
+name = "stratum_codeview"
+description = "CodeView line/symbol codec surfacing PE machine addresses to and from source spans"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+stratum_oir.workspace = true
+stratum_diagnostics.workspace = true
+
+[dev-dependencies]
+stratum_pe.workspace = true
+
+[lints]
+workspace = true

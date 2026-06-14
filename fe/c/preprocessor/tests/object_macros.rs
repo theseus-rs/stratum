@@ -45,6 +45,11 @@ fn redefinition_with_identical_body_is_allowed() {
 }
 
 #[test]
+fn conflicting_object_macro_redefinition_is_an_error() {
+    assert_errors("#define A 1\n#define A 2\nA");
+}
+
+#[test]
 fn undef_removes_definition() {
     assert_expands("#define X 5\n#undef X\nX", "X");
 }

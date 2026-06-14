@@ -1,7 +1,7 @@
 //! The recursive-descent parser: cursor, scopes, and the top-level grammar.
 
 use crate::alloc_prelude::*;
-use stratum_utils::HashSet;
+use stratum_utils::HashMap;
 
 use stratum_arena::{Interner, Symbol};
 use stratum_c_ast::{
@@ -10,6 +10,12 @@ use stratum_c_ast::{
 };
 use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
 use stratum_diagnostics::{Diagnostic, FileId, Label, Span};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NameClass {
+    Typedef,
+    Ordinary,
+}
 
 /// The result of parsing a translation unit.
 #[derive(Debug)]
@@ -30,12 +36,6 @@ impl ParseResult {
 
 /// A marker indicating a diagnostic has been recorded and the caller should recover.
 pub(crate) struct ParseError;
-
-impl From<stratum_c_ast::Error> for ParseError {
-    fn from(_: stratum_c_ast::Error) -> Self {
-        ParseError
-    }
-}
 
 pub(crate) type PResult<T> = Result<T, ParseError>;
 
@@ -74,7 +74,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) pos: usize,
     pub(crate) ast: CAst,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    pub(crate) typedefs: Vec<HashSet<Symbol>>,
+    pub(crate) names: Vec<HashMap<Symbol, NameClass>>,
     pub(crate) dialect: Dialect,
 }
 
@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             ast: CAst::with_interner(interner),
             diagnostics: Vec::new(),
-            typedefs: vec![HashSet::default()],
+            names: vec![HashMap::default()],
             dialect,
         }
     }
@@ -110,14 +110,16 @@ impl<'a> Parser<'a> {
     }
 
     fn token_at_or_eof(&self, pos: usize) -> Token {
-        self.tokens
-            .get(pos)
-            .or_else(|| self.tokens.last())
-            .copied()
-            .unwrap_or(Token {
-                kind: TokenKind::Eof,
-                span: Span::point(FileId::from_raw(0), 0),
-            })
+        if let Some(token) = self.tokens.get(pos).copied() {
+            return token;
+        }
+        if let Some(token) = self.tokens.last().copied() {
+            return token;
+        }
+        Token {
+            kind: TokenKind::Eof,
+            span: Span::point(FileId::from_raw(0), 0),
+        }
     }
 
     pub(crate) fn at_eof(&self) -> bool {
@@ -201,6 +203,14 @@ impl<'a> Parser<'a> {
 
     // --- Diagnostics & recovery ------------------------------------------------------------
 
+    pub(crate) fn alloc_node(&mut self, node: CNode, span: Span) -> PResult<CNodeId> {
+        self.ast.alloc(node, span).map_or(Err(ParseError), Ok)
+    }
+
+    pub(crate) fn intern_ast(&mut self, text: &str) -> PResult<Symbol> {
+        self.ast.intern(text).map_or(Err(ParseError), Ok)
+    }
+
     pub(crate) fn error(&mut self, message: &str) -> ParseError {
         let span = self.peek().span;
         self.error_at(span, message)
@@ -240,24 +250,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // --- Scopes & typedef table ------------------------------------------------------------
+    // --- Scopes & parser name classification -----------------------------------------------
 
     pub(crate) fn enter_scope(&mut self) {
-        self.typedefs.push(HashSet::default());
+        self.names.push(HashMap::default());
     }
 
     pub(crate) fn exit_scope(&mut self) {
-        self.typedefs.pop();
+        self.names.pop();
     }
 
     pub(crate) fn add_typedef(&mut self, name: Symbol) {
-        if let Some(scope) = self.typedefs.last_mut() {
-            scope.insert(name);
+        self.define_name(name, NameClass::Typedef);
+    }
+
+    pub(crate) fn add_ordinary_identifier(&mut self, name: Symbol) {
+        self.define_name(name, NameClass::Ordinary);
+    }
+
+    fn define_name(&mut self, name: Symbol, class: NameClass) {
+        if let Some(scope) = self.names.last_mut() {
+            scope.insert(name, class);
         }
     }
 
     pub(crate) fn is_typedef_name(&self, name: Symbol) -> bool {
-        self.typedefs.iter().rev().any(|s| s.contains(&name))
+        self.names
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&name).copied())
+            == Some(NameClass::Typedef)
     }
 
     // --- Top level -------------------------------------------------------------------------
@@ -299,7 +321,7 @@ impl<'a> Parser<'a> {
                 specifiers,
                 declarators: Vec::new(),
             };
-            return Ok(self.ast.alloc(node, start)?);
+            return self.alloc_node(node, start);
         }
 
         let declarator = self.parse_declarator(false)?;
@@ -316,14 +338,21 @@ impl<'a> Parser<'a> {
         declarator: Declarator,
         start: Span,
     ) -> PResult<CNodeId> {
-        let body = self.parse_compound_statement()?;
+        if let Some(name) = declarator.name {
+            self.add_ordinary_identifier(name);
+        }
+        self.enter_scope();
+        self.add_function_parameter_names(&declarator);
+        let body = self.parse_compound_statement();
+        self.exit_scope();
+        let body = body?;
         let span = start.to(self.ast.span(body));
         let node = CNode::FunctionDef {
             specifiers,
             declarator,
             body,
         };
-        Ok(self.ast.alloc(node, span)?)
+        self.alloc_node(node, span)
     }
 
     pub(crate) fn parse_static_assert(&mut self) -> PResult<CNodeId> {
@@ -353,9 +382,7 @@ impl<'a> Parser<'a> {
         };
         self.expect_punct(Punctuator::RParen)?;
         let end = self.expect_punct(Punctuator::Semicolon)?;
-        Ok(self
-            .ast
-            .alloc(CNode::StaticAssert { cond, message }, start.to(end))?)
+        self.alloc_node(CNode::StaticAssert { cond, message }, start.to(end))
     }
 
     pub(crate) fn finish_declaration(
@@ -367,7 +394,10 @@ impl<'a> Parser<'a> {
         let is_typedef = specifiers.storage.contains(&StorageClass::Typedef);
         let mut declarators = Vec::new();
         self.push_init_declarator(first, is_typedef, &mut declarators)?;
-        while self.eat_punct(Punctuator::Comma) {
+        loop {
+            if !self.eat_punct(Punctuator::Comma) {
+                break;
+            }
             let declarator = self.parse_declarator(false)?;
             self.push_init_declarator(declarator, is_typedef, &mut declarators)?;
         }
@@ -376,7 +406,7 @@ impl<'a> Parser<'a> {
             specifiers,
             declarators,
         };
-        Ok(self.ast.alloc(node, start.to(end))?)
+        self.alloc_node(node, start.to(end))
     }
 
     fn push_init_declarator(
@@ -385,8 +415,10 @@ impl<'a> Parser<'a> {
         is_typedef: bool,
         out: &mut Vec<InitDeclarator>,
     ) -> PResult<()> {
-        if is_typedef && let Some(name) = declarator.name {
-            self.add_typedef(name);
+        match declarator.name {
+            Some(name) if is_typedef => self.add_typedef(name),
+            Some(name) => self.add_ordinary_identifier(name),
+            None => {}
         }
         let init = if self.eat_punct(Punctuator::Assign) {
             Some(self.parse_initializer()?)
@@ -395,6 +427,19 @@ impl<'a> Parser<'a> {
         };
         out.push(InitDeclarator { declarator, init });
         Ok(())
+    }
+
+    fn add_function_parameter_names(&mut self, declarator: &Declarator) {
+        for derivation in &declarator.derivations {
+            let stratum_c_ast::Derivation::Function { params, .. } = derivation else {
+                continue;
+            };
+            for param in params {
+                if let Some(name) = param.declarator.name {
+                    self.add_ordinary_identifier(name);
+                }
+            }
+        }
     }
 
     /// Parses an initialiser: an assignment expression or a braced initialiser list.
@@ -419,7 +464,7 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect_punct(Punctuator::RBrace)?;
-        Ok(self.ast.alloc(CNode::InitList(items), start.to(end))?)
+        self.alloc_node(CNode::InitList(items), start.to(end))
     }
 
     /// Parses one initialiser-list entry: an optional designator list (terminated by `=`)
@@ -458,9 +503,11 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParseError, Parser};
-    use stratum_arena::Interner;
-    use stratum_c_lexer::{Punctuator, Token, TokenKind};
+    use super::Parser;
+    use std::vec::Vec;
+    use stratum_arena::{Interner, Symbol};
+    use stratum_c_ast::Declarator;
+    use stratum_c_lexer::{Dialect, Keyword, Punctuator, Token, TokenKind};
     use stratum_diagnostics::{FileId, Span};
 
     fn span() -> Span {
@@ -468,8 +515,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_error_converts_from_ast_error() {
-        let _err: ParseError = stratum_c_ast::Error::InconsistentNodeStorage.into();
+    fn public_parse_accepts_empty_token_stream() {
+        let result = crate::parse(&[], Interner::new()).unwrap();
+        assert!(!result.has_errors());
+        assert!(result.ast.root().is_some());
     }
 
     #[test]
@@ -496,6 +545,231 @@ mod tests {
             span: span(),
         }];
         let mut parser = Parser::new(&tokens, Interner::new());
+        assert!(parser.parse_static_assert().is_err());
+    }
+
+    #[test]
+    fn add_typedef_is_noop_without_active_scope() {
+        let mut parser = Parser::new(&[], Interner::new());
+        parser.exit_scope();
+
+        parser.add_typedef(Symbol::default());
+
+        assert!(!parser.is_typedef_name(Symbol::default()));
+    }
+
+    #[test]
+    fn ordinary_identifier_shadows_outer_typedef_lookup() {
+        let mut parser = Parser::new(&[], Interner::new());
+        let name = Symbol::default();
+
+        parser.add_typedef(name);
+        assert!(parser.is_typedef_name(name));
+        parser.enter_scope();
+        parser.add_ordinary_identifier(name);
+
+        assert!(!parser.is_typedef_name(name));
+    }
+
+    #[test]
+    fn unnamed_init_declarator_does_not_enter_scope() {
+        let tokens = [Token {
+            kind: TokenKind::Punct(Punctuator::Semicolon),
+            span: span(),
+        }];
+        let mut parser = Parser::new(&tokens, Interner::new());
+        let mut declarators = Vec::new();
+
+        assert!(
+            parser
+                .push_init_declarator(Declarator::default(), false, &mut declarators)
+                .is_ok()
+        );
+
+        assert!(matches!(
+            declarators.as_slice(),
+            [declarator] if declarator.declarator.name.is_none() && declarator.init.is_none()
+        ));
+    }
+
+    #[test]
+    fn token_lookup_past_non_empty_stream_returns_last_token() {
+        let eof = Token {
+            kind: TokenKind::Eof,
+            span: Span::point(FileId::from_raw(0), 7),
+        };
+        let tokens = [eof];
+        let parser = Parser::new(&tokens, Interner::new());
+
+        assert_eq!(parser.token_at_or_eof(1).span, eof.span);
+    }
+
+    #[test]
+    fn token_lookup_on_empty_stream_returns_synthetic_eof() {
+        let parser = Parser::new(&[], Interner::new());
+        let token = parser.token_at_or_eof(0);
+
+        assert_eq!(token.kind, TokenKind::Eof);
+        assert_eq!(token.span, Span::point(FileId::from_raw(0), 0));
+    }
+
+    #[test]
+    fn recovery_edges_are_covered_directly() {
+        let nested_attributes = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBracket),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Eof,
+                span: span(),
+            },
+        ];
+        let mut parser = Parser::new(&nested_attributes, Interner::new());
+        parser.dialect = Dialect::C23;
+        parser.skip_attribute_specifiers().ok().unwrap();
+
+        let mut parser = Parser::new(&[], Interner::new());
+        parser.dialect = Dialect::C89;
+        assert!(parser.require(Dialect::C99, "future feature").is_err());
+
+        let tokens = [Token {
+            kind: TokenKind::Punct(Punctuator::Semicolon),
+            span: span(),
+        }];
+        let mut parser = Parser::new(&tokens, Interner::new());
+        parser.synchronize();
+        assert_eq!(parser.pos, 0);
+
+        let tokens = [Token {
+            kind: TokenKind::Punct(Punctuator::RBrace),
+            span: span(),
+        }];
+        let mut parser = Parser::new(&tokens, Interner::new());
+        parser.synchronize();
+        assert_eq!(parser.pos, 0);
+
+        let tokens = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBrace),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Eof,
+                span: span(),
+            },
+        ];
+        let result = crate::parse(&tokens, Interner::new()).unwrap();
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn dialect_error_edges_are_covered_directly() {
+        let mut parser = Parser::new(&[], Interner::new());
+        parser.dialect = Dialect::C89;
+        assert!(parser.require(Dialect::C99, "future feature").is_err());
+
+        let empty_initializer = [
+            Token {
+                kind: TokenKind::Punct(Punctuator::LBrace),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RBrace),
+                span: span(),
+            },
+        ];
+        let mut parser = Parser::new(&empty_initializer, Interner::new());
+        parser.dialect = Dialect::C17;
+        assert!(parser.parse_brace_initializer().is_err());
+    }
+
+    #[test]
+    fn static_assert_error_edges_are_covered_directly() {
+        let static_assert_without_message = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::StaticAssert),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 1,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::RParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Semicolon),
+                span: span(),
+            },
+        ];
+        let mut parser = Parser::new(&static_assert_without_message, Interner::new());
+        parser.dialect = Dialect::C11;
+        assert!(parser.parse_static_assert().is_err());
+
+        let static_assert_with_bad_message = [
+            Token {
+                kind: TokenKind::Keyword(Keyword::StaticAssert),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::LParen),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Integer {
+                    value: 1,
+                    unsigned: false,
+                },
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Punct(Punctuator::Comma),
+                span: span(),
+            },
+            Token {
+                kind: TokenKind::Keyword(Keyword::Int),
+                span: span(),
+            },
+        ];
+        let mut parser = Parser::new(&static_assert_with_bad_message, Interner::new());
+        parser.dialect = Dialect::C11;
         assert!(parser.parse_static_assert().is_err());
     }
 }

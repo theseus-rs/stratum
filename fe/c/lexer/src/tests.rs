@@ -404,3 +404,58 @@ fn remaining_digraphs_normalise() {
         Some(PpTokenKind::Punct(Punctuator::HashHash))
     );
 }
+
+#[test]
+fn lexer_recognizes_every_punctuator_spelling() {
+    let cases = [
+        (Punctuator::Arrow, "->"),
+        (Punctuator::PlusPlus, "++"),
+        (Punctuator::MinusMinus, "--"),
+        (Punctuator::Shl, "<<"),
+        (Punctuator::Shr, ">>"),
+        (Punctuator::Le, "<="),
+        (Punctuator::Ge, ">="),
+        (Punctuator::EqEq, "=="),
+        (Punctuator::Ne, "!="),
+        (Punctuator::AmpAmp, "&&"),
+        (Punctuator::PipePipe, "||"),
+        (Punctuator::StarAssign, "*="),
+        (Punctuator::SlashAssign, "/="),
+        (Punctuator::PercentAssign, "%="),
+        (Punctuator::PlusAssign, "+="),
+        (Punctuator::MinusAssign, "-="),
+        (Punctuator::AmpAssign, "&="),
+        (Punctuator::CaretAssign, "^="),
+        (Punctuator::PipeAssign, "|="),
+        (Punctuator::HashHash, "##"),
+        (Punctuator::LBracket, "["),
+        (Punctuator::RBracket, "]"),
+        (Punctuator::LBrace, "{"),
+        (Punctuator::RBrace, "}"),
+        (Punctuator::Dot, "."),
+        (Punctuator::Amp, "&"),
+        (Punctuator::Star, "*"),
+        (Punctuator::Minus, "-"),
+        (Punctuator::Tilde, "~"),
+        (Punctuator::Bang, "!"),
+        (Punctuator::Slash, "/"),
+        (Punctuator::Percent, "%"),
+        (Punctuator::Lt, "<"),
+        (Punctuator::Gt, ">"),
+        (Punctuator::Caret, "^"),
+        (Punctuator::Pipe, "|"),
+        (Punctuator::Question, "?"),
+        (Punctuator::Colon, ":"),
+        (Punctuator::Assign, "="),
+        (Punctuator::Comma, ","),
+        (Punctuator::Hash, "#"),
+    ];
+    for (punct, spelling) in cases {
+        let kinds = lex_kinds(spelling);
+        assert_eq!(kind(&kinds, 0), Some(PpTokenKind::Punct(punct)));
+    }
+
+    let kinds = lex_kinds("1@");
+    assert!(matches!(kind(&kinds, 0), Some(PpTokenKind::Number(_))));
+    assert_eq!(kind(&kinds, 1), Some(PpTokenKind::Other('@')));
+}

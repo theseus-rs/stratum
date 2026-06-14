@@ -257,16 +257,61 @@ impl HirContext {
             HirNode::SizeofType(ty) => {
                 let _ = writeln!(out, "sizeof-type {}", self.type_to_string(*ty));
             }
+            HirNode::AlignofExpr(operand) => {
+                out.push_str("alignof-expr\n");
+                self.dump_node(*operand, depth + 1, out);
+            }
+            HirNode::AlignofType(ty) => {
+                let _ = writeln!(out, "alignof-type {}", self.type_to_string(*ty));
+            }
+            HirNode::GenericSelection {
+                controlling,
+                associations,
+                selected,
+            } => self.dump_generic_selection(*controlling, associations, *selected, depth, out),
             HirNode::CompoundLiteral { ty, init } => {
                 let _ = writeln!(out, "compound-literal {}", self.type_to_string(*ty));
                 self.dump_init(init, depth + 1, out);
             }
             HirNode::Name(_)
             | HirNode::IntLiteral(_)
+            | HirNode::BoolLiteral(_)
+            | HirNode::Nullptr
             | HirNode::FloatLiteral(_)
             | HirNode::StringLiteral(_)
             | HirNode::CharLiteral(_) => self.dump_leaf_expr(id, out),
             _ => out.push_str("<invalid-expr>\n"),
+        }
+    }
+
+    fn dump_generic_selection(
+        &self,
+        controlling: HirNodeId,
+        associations: &[crate::node::GenericAssociation],
+        selected: Option<usize>,
+        depth: usize,
+        out: &mut String,
+    ) {
+        match selected {
+            Some(index) => {
+                let _ = writeln!(out, "generic-selection selected {index}");
+            }
+            None => out.push_str("generic-selection\n"),
+        }
+        Self::indent(out, depth + 1);
+        out.push_str("controlling\n");
+        self.dump_node(controlling, depth + 2, out);
+        for (index, association) in associations.iter().enumerate() {
+            Self::indent(out, depth + 1);
+            match association.ty {
+                Some(ty) => {
+                    let _ = writeln!(out, "association {index} {}", self.type_to_string(ty));
+                }
+                None => {
+                    let _ = writeln!(out, "association {index} default");
+                }
+            }
+            self.dump_node(association.expr, depth + 2, out);
         }
     }
 
@@ -282,6 +327,10 @@ impl HirContext {
             HirNode::IntLiteral(value) => {
                 let _ = writeln!(out, "int {value}");
             }
+            HirNode::BoolLiteral(value) => {
+                let _ = writeln!(out, "bool {value}");
+            }
+            HirNode::Nullptr => out.push_str("nullptr\n"),
             HirNode::FloatLiteral(symbol) => {
                 let _ = writeln!(
                     out,
@@ -529,8 +578,8 @@ mod tests {
     use crate::alloc_prelude::*;
     use crate::context::HirContext;
     use crate::node::{
-        BinaryOp, DeclFlags, Designator, EnumVariant, Field, HirInit, HirNode, InitEntry, Param,
-        PostfixOp, RecordKind, StorageClass, UnaryOp,
+        BinaryOp, DeclFlags, Designator, EnumVariant, Field, GenericAssociation, HirInit, HirNode,
+        InitEntry, Param, PostfixOp, RecordKind, StorageClass, UnaryOp,
     };
     use crate::types::{HirType, IntWidth, Qualifiers, TagKind};
     use stratum_diagnostics::{SourceMap, Span};
@@ -956,6 +1005,27 @@ module
         let comma = hir.alloc(HirNode::Comma { lhs: one, rhs: two }, s).unwrap();
         let sizeof_expr = hir.alloc(HirNode::SizeofExpr(one), s).unwrap();
         let sizeof_type = hir.alloc(HirNode::SizeofType(ptr_ty), s).unwrap();
+        let alignof_expr = hir.alloc(HirNode::AlignofExpr(one), s).unwrap();
+        let alignof_type = hir.alloc(HirNode::AlignofType(ptr_ty), s).unwrap();
+        let generic = hir
+            .alloc(
+                HirNode::GenericSelection {
+                    controlling: one,
+                    associations: vec![
+                        GenericAssociation {
+                            ty: Some(i32_ty),
+                            expr: two,
+                        },
+                        GenericAssociation {
+                            ty: None,
+                            expr: one,
+                        },
+                    ],
+                    selected: None,
+                },
+                s,
+            )
+            .unwrap();
         let compound = hir
             .alloc(
                 HirNode::CompoundLiteral {
@@ -965,6 +1035,8 @@ module
                 s,
             )
             .unwrap();
+        let bool_lit = hir.alloc(HirNode::BoolLiteral(true), s).unwrap();
+        let nullptr = hir.alloc(HirNode::Nullptr, s).unwrap();
         let expr_stmt = hir.alloc(HirNode::ExprStmt(Some(assign)), s).unwrap();
         let func = hir
             .alloc(
@@ -1040,7 +1112,12 @@ module
                     comma,
                     sizeof_expr,
                     sizeof_type,
+                    alignof_expr,
+                    alignof_type,
+                    generic,
                     compound,
+                    bool_lit,
+                    nullptr,
                     flt,
                     string,
                 ]),
@@ -1054,6 +1131,12 @@ module
         assert!(dump.contains("auto function name(...)"));
         assert!(dump.contains("member ->field"));
         assert!(dump.contains("member .field"));
+        assert!(dump.contains("alignof-expr"));
+        assert!(dump.contains("alignof-type *i32"));
+        assert!(dump.contains("generic-selection"));
+        assert!(dump.contains("association 1 default"));
+        assert!(dump.contains("bool true"));
+        assert!(dump.contains("nullptr"));
         assert!(dump.contains("compound-literal [i32; 3]"));
     }
 

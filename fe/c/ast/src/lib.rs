@@ -17,11 +17,13 @@ pub mod alloc_prelude {
 
 mod dump;
 mod error;
+mod literal;
 mod node;
 mod ops;
 mod tree;
 
 pub use error::{Error, Result};
+pub use literal::{decode_char_literal, decode_string_literal, parse_integer};
 pub use node::{
     AlignmentSpecifier, CNode, DeclSpecifiers, Declarator, Derivation, Designator, Enumerator,
     FieldDecl, GenericAssociation, InitDeclarator, InitItem, ParamDecl, StorageClass, TypeName,

@@ -83,11 +83,7 @@ pub trait HirBridge {
     ///
     /// Returns an error if lowering cannot allocate HIR storage or if the source structure is
     /// invalid for the frontend.
-    fn lower(
-        &self,
-        ast: &Self::Ast,
-        cx: &mut HirContext,
-    ) -> core::result::Result<HirNodeId, Self::Error>;
+    fn lower(&self, ast: &Self::Ast, cx: &mut HirContext) -> Result<HirNodeId, Self::Error>;
 
     /// Raises the HIR held in `cx` back into source text for this frontend's language.
     ///
@@ -95,5 +91,5 @@ pub trait HirBridge {
     ///
     /// Returns an error if the HIR is malformed for this language (for example, a node
     /// appearing in a position it cannot occupy) or if a symbol cannot be resolved.
-    fn raise(&self, cx: &HirContext) -> core::result::Result<String, Self::Error>;
+    fn raise(&self, cx: &HirContext) -> Result<String, Self::Error>;
 }

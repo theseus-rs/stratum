@@ -24,8 +24,13 @@ impl HirBridge for CBridge {
 
     fn lower(&self, ast: &CAst, cx: &mut HirContext) -> crate::error::Result<HirNodeId> {
         let lowering = crate::lower::CLowering::new(ast);
-        let (root, _diagnostics) = lowering.run(cx)?;
-        cx.set_root(root);
+        let mut lowered = HirContext::new();
+        let (root, diagnostics) = lowering.run(&mut lowered)?;
+        if !diagnostics.is_empty() {
+            return Err(crate::error::Error::LoweringDiagnostics);
+        }
+        lowered.set_root(root);
+        *cx = lowered;
         Ok(root)
     }
 

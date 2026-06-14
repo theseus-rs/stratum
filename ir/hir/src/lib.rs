@@ -25,7 +25,7 @@ pub use bridge::HirBridge;
 pub use context::{HirContext, HirNodeId, HirTypeId};
 pub use error::{Error, Result};
 pub use node::{
-    BinaryOp, DeclFlags, Designator, EnumVariant, Field, HirInit, HirNode, InitEntry, Param,
-    PostfixOp, QualifiedType, RecordKind, StorageClass, UnaryOp,
+    BinaryOp, DeclFlags, Designator, EnumVariant, Field, GenericAssociation, HirInit, HirNode,
+    InitEntry, Param, PostfixOp, QualifiedType, RecordKind, StorageClass, UnaryOp,
 };
 pub use types::{HirType, IntWidth, Qualifiers, TagKind};

@@ -96,6 +96,12 @@ fn indirect_stringize_expands_first() {
     );
 }
 
+#[test]
+fn hash_not_followed_by_parameter_is_plain_token() {
+    assert_expands("#define HASH #\nHASH", "#");
+    assert_expands("#define HASH_PLUS(x) # + x\nHASH_PLUS(a)", "# + a");
+}
+
 // --- Token pasting (`##`) ----------------------------------------------------------------
 
 #[test]
